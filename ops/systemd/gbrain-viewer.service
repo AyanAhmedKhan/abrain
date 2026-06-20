@@ -1,0 +1,21 @@
+# gbrain · graph viewer (static web server, localhost-only)
+# Serves /opt/gbrain/viewer on 127.0.0.1:8099 (graph_viewer.html + graph.json).
+# Localhost bind only — reach it via VS Code / SSH port forwarding.
+# Install: copy to /etc/systemd/system/, daemon-reload, enable --now.
+[Unit]
+Description=gbrain knowledge-graph viewer (127.0.0.1:8099)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gbrain
+WorkingDirectory=/opt/gbrain/viewer
+ExecStart=/opt/gbrain/.venv/bin/python -m http.server 8099 --bind 127.0.0.1 --directory /opt/gbrain/viewer
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+# gbrain · web dashboard (Next.js, localhost-only)
+# Reads the gold views server-side; DB creds never reach the browser.
+# Reach it via VS Code / SSH port-forward of 3001.
+[Unit]
+Description=gbrain web dashboard (127.0.0.1:3001)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gbrain
+WorkingDirectory=/opt/gbrain/dashboard
+Environment=NODE_ENV=production
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/opt/gbrain/dashboard/.env.local
+ExecStart=/usr/local/bin/node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3001
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

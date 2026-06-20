@@ -1,0 +1,15 @@
+# gbrain · sweeper (oneshot, driven by gbrain-sweeper.timer)
+# Re-enqueues gb_raw rows that never produced an envelope (lost n8n→pgmq handoff).
+[Unit]
+Description=gbrain sweeper (orphaned-raw backstop)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.sweeper
+StandardOutput=journal
+StandardError=journal

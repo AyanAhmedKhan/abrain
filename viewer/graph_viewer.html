@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>Dexter Capital · Company Brain</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#ffffff; --ink:#0e1726; --dim:#67748a; --line:#e7eaf0;
+    --accent:#2563eb; --chip:#f1f3f7; --shadow:0 1px 2px rgba(16,24,40,.06),0 1px 3px rgba(16,24,40,.10);
+  }
+  *{box-sizing:border-box;margin:0;-webkit-font-smoothing:antialiased}
+  body{background:var(--bg);color:var(--ink);
+    font:13.5px/1.45 ui-sans-serif,-apple-system,"Segoe UI",Inter,Roboto,sans-serif;height:100vh;overflow:hidden}
+  #app{display:grid;grid-template-rows:54px 1fr;height:100vh}
+  /* header */
+  header{display:flex;align-items:center;gap:18px;padding:0 18px;background:var(--panel);
+    border-bottom:1px solid var(--line);z-index:5}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:650;letter-spacing:.2px}
+  .brand .mark{width:26px;height:26px;border-radius:7px;background:#0e1726;color:#fff;display:flex;
+    align-items:center;justify-content:center;font-weight:800;font-size:14px}
+  .brand small{color:var(--dim);font-weight:500}
+  .tabs{display:flex;gap:4px;margin-left:6px}
+  .tab{padding:6px 12px;border-radius:8px;color:var(--dim);cursor:pointer;font-weight:550}
+  .tab.on{background:var(--chip);color:var(--ink)}
+  .counts{margin-left:auto;display:flex;gap:18px;color:var(--dim);font-size:12.5px}
+  .counts b{color:var(--ink);font-variant-numeric:tabular-nums}
+  /* body */
+  .body{display:grid;grid-template-columns:264px 1fr;height:100%;min-height:0}
+  aside{background:var(--panel);border-right:1px solid var(--line);padding:14px;overflow-y:auto}
+  input[type=search]{width:100%;padding:8px 11px;border-radius:9px;border:1px solid var(--line);
+    background:#fbfcfe;color:var(--ink);outline:none}
+  input[type=search]:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+  .fhead{display:flex;align-items:center;justify-content:space-between;margin:16px 0 6px;
+    font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);font-weight:700}
+  .fhead a{color:var(--accent);cursor:pointer;text-decoration:none;font-size:11px;font-weight:600}
+  .legend label{display:flex;align-items:center;gap:9px;padding:5px 6px;cursor:pointer;color:var(--ink);
+    border-radius:8px;font-weight:500}
+  .legend label:hover{background:var(--chip)}
+  .legend label.off{opacity:.42}
+  .legend .box{width:15px;height:15px;border-radius:5px;flex:none;border:2px solid;display:flex;
+    align-items:center;justify-content:center;font-size:10px;color:#fff;font-weight:800}
+  .cnt{margin-left:auto;color:var(--dim);font-variant-numeric:tabular-nums;font-size:12px}
+  .only{color:var(--dim);font-size:10px;border:1px solid var(--line);border-radius:6px;
+    padding:1px 6px;margin-left:6px;visibility:hidden}
+  .legend label:hover .only{visibility:visible}
+  .only:hover{color:var(--ink);border-color:var(--dim)}
+  /* canvas + detail */
+  main{position:relative;min-width:0}
+  svg{width:100%;height:100%;display:block;cursor:grab;background:
+    radial-gradient(1200px 800px at 60% 45%, #ffffff 0%, #f3f5f8 70%, #eef1f5 100%)}
+  .node-label{font-size:10.5px;fill:#3a4660;pointer-events:none;font-weight:550}
+  .hub-label{font-size:12px;fill:#1c2740;pointer-events:none;font-weight:700}
+  #detail{position:absolute;top:14px;right:14px;width:300px;max-height:calc(100% - 28px);overflow:auto;
+    background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);
+    padding:16px;display:none}
+  #detail.show{display:block}
+  #detail .type{display:inline-block;font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;
+    color:#fff;padding:2px 8px;border-radius:999px;font-weight:700}
+  #detail h2{font-size:16px;margin:9px 0 2px;line-height:1.25}
+  #detail .sub{color:var(--dim);font-size:12px;margin-bottom:8px}
+  #detail ul{list-style:none;margin-top:6px}
+  #detail li{padding:3px 0;color:var(--dim);font-size:12.5px}
+  #detail li b{color:var(--ink);font-weight:600}
+  #detail pre{background:#0e1726;border-radius:9px;padding:10px;margin-top:10px;font-size:11px;
+    white-space:pre-wrap;max-height:220px;overflow:auto;color:#cdd5e4}
+  #detail .x{position:absolute;top:12px;right:12px;cursor:pointer;color:var(--dim);font-size:16px}
+  .hint{color:var(--dim);font-size:12px}
+  .badge{display:inline-block;background:var(--chip);border-radius:7px;padding:2px 8px;margin:2px 4px 2px 0;
+    font-size:11.5px;color:#33405a}
+  #file{margin-top:14px;font-size:12px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><span class="mark">D</span>Dexter Capital <small>· Company Brain</small></div>
+    <div class="tabs">
+      <div class="tab on" data-view="radial">Radial</div>
+      <div class="tab" data-view="force">Force</div>
+    </div>
+    <div class="counts"><span>Entities <b id="c-ent">–</b></span><span>Connections <b id="c-con">–</b></span></div>
+  </header>
+  <div class="body">
+    <aside>
+      <input id="q" type="search" placeholder="Search companies, people…">
+      <div class="fhead">Entity types <span><a id="t-all">all</a> · <a id="t-none">none</a></span></div>
+      <div class="legend" id="legend"></div>
+      <div class="fhead">Sectors <span><a id="s-all">all</a> · <a id="s-none">none</a></span></div>
+      <div class="legend" id="sectors"></div>
+      <div class="fhead">Relationships <span><a id="r-all">all</a> · <a id="r-none">none</a></span></div>
+      <div class="legend" id="rels"></div>
+      <div id="file">No graph.json? <input type="file" id="filein" accept=".json"></div>
+    </aside>
+    <main>
+      <svg id="g"></svg>
+      <div id="detail"></div>
+    </main>
+  </div>
+</div>
+<script>
+const TYPE_COLORS = { company:'#2563eb', person:'#f59e0b', deal:'#10b981',
+                      document:'#94a3b8', investor:'#8b5cf6', meeting:'#ef4444' };
+const SECTOR_PALETTE = ['#2563eb','#10b981','#f59e0b','#8b5cf6','#ef4444','#0ea5e9',
+                        '#14b8a6','#e11d48','#65a30d','#a855f7','#f97316','#475569'];
+const REL_COLORS = { mentions:'#cbd5e1', sent_by:'#fbbf24', about:'#93c5fd',
+                     works_at:'#c4b5fd', involves:'#6ee7b7', attended:'#fca5a5' };
+const relColor = r => REL_COLORS[r] || '#cbd5e1';
+const RING = { center:0, sector:200, company:380, deal:520, person:520, document:660 };
+const NOISY_RELS = new Set(['sent_by','mentions']);   // off by default — super-hub clutter
+
+const state = { raw:null, view:'radial', active:new Set(), activeRels:new Set(),
+                activeSecs:new Set(), sectorColor:{}, sel:null, pos:{}, t:d3.zoomIdentity };
+let svg, root, zoom, sim=null;
+
+function sectorOf(n){ return (n.attrs && n.attrs.sector) ? n.attrs.sector : 'Other'; }
+function companyOf(n){ return n.attrs && n.attrs.company ? n.attrs.company : null; }
+
+/* ---- build the working model: real nodes + synthetic center & sector hubs ---- */
+function model(){
+  const nodes = state.raw.nodes.map(n=>Object.assign({},n));
+  const byId = new Map(nodes.map(n=>[n.id,n]));
+  const compByName = new Map(nodes.filter(n=>n.type==='company').map(n=>[n.label,n]));
+  const sectors = [...new Set(nodes.filter(n=>n.type==='company').map(sectorOf))].sort();
+  sectors.forEach((s,i)=> state.sectorColor[s] = SECTOR_PALETTE[i%SECTOR_PALETTE.length]);
+
+  const center = {id:'__center', type:'hub', label:'Dexter Capital', degree:99, attrs:{}};
+  const secNodes = sectors.map(s=>({id:'__sec__'+s, type:'sector', label:s, sector:s,
+                                    degree: nodes.filter(n=>n.type==='company'&&sectorOf(n)===s).length}));
+  const synthLinks=[];
+  secNodes.forEach(sn=> synthLinks.push({source:'__center', target:sn.id, rel:'__hub'}));
+  nodes.filter(n=>n.type==='company').forEach(c=>
+    synthLinks.push({source:'__sec__'+sectorOf(c), target:c.id, rel:'__hub'}));
+
+  const all = [center, ...secNodes, ...nodes];
+  const links = state.raw.edges.map(e=>({source:e.source, target:e.target, rel:e.rel}));
+  return {all, links, synthLinks, byId, compByName, sectors};
+}
+
+/* ---- deterministic radial layout ---- */
+function radial(M, visN){
+  const comps = visN.filter(n=>n.type==='company');
+  const bySector = d3.group(comps, sectorOf);
+  // biggest sectors first, evenly spaced around the circle
+  const secs = [...bySector.keys()].sort((a,b)=>bySector.get(b).length-bySector.get(a).length);
+  const N = secs.length || 1;
+  const pos = {'__center':{x:0,y:0}};
+  const compAngle = {};
+
+  secs.forEach((sec,si)=>{
+    const cs = bySector.get(sec);
+    const c0 = -Math.PI/2 + (si/N)*2*Math.PI;          // even sector spoke
+    pos['__sec__'+sec] = polar(RING.sector, c0);
+    const slice = (2*Math.PI/N) * 0.78;                // fan companies inside the slot
+    cs.forEach((c,i)=>{
+      const t = cs.length===1 ? c0 : c0 - slice/2 + slice*(i/(cs.length-1));
+      compAngle[c.id]=t; pos[c.id]=polar(RING.company, t);
+    });
+  });
+
+  // people & deals cluster as leaves just outside their company
+  const leaves={};
+  visN.forEach(n=>{
+    if(n.type==='person'||n.type==='deal'){
+      const cn=companyOf(n), c=cn&&M.compByName.get(cn);
+      if(c&&compAngle[c.id]!=null)(leaves[c.id]=leaves[c.id]||[]).push(n);
+    }
+  });
+  Object.keys(leaves).forEach(cid=>{
+    const base=compAngle[cid], arr=leaves[cid], n=arr.length;
+    arr.forEach((nd,i)=>{
+      const off=(n===1?0:(i/(n-1)-0.5))*Math.min(0.34,0.07*n);
+      pos[nd.id]=polar(RING[nd.type]||RING.person, base+off);
+    });
+  });
+
+  // leftovers (orphans, documents) → outer ring, near a linked company if any
+  let k=0; const rest=visN.filter(n=>!pos[n.id]); const RN=rest.length||1;
+  rest.forEach(n=>{
+    let t=null;
+    for(const l of M.links){
+      const o=l.source===n.id?l.target:(l.target===n.id?l.source:null);
+      if(o&&compAngle[o]!=null){ t=compAngle[o]+(hashId(n.id)%50/50-0.5)*0.22; break; }
+    }
+    if(t==null) t=-Math.PI/2+(k++/RN)*2*Math.PI;
+    pos[n.id]=polar(RING[n.type]||RING.document, t);
+  });
+  return pos;
+}
+function polar(r,a){ return {x:Math.cos(a)*r, y:Math.sin(a)*r}; }
+function hashId(s){ let h=0; for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))|0; return Math.abs(h); }
+
+/* ---- filtering ---- */
+function visibleNodes(M){
+  const q=document.getElementById('q').value.toLowerCase();
+  return M.all.filter(n=>{
+    if(n.type==='hub') return true;
+    if(n.type==='sector') return state.activeSecs.has(n.sector);
+    if(!state.active.has(n.type)) return false;
+    if(n.type==='company' && !state.activeSecs.has(sectorOf(n))) return false;
+    if(n.type==='person'||n.type==='deal'){ const c=companyOf(n);
+      if(c){ const cn=M.compByName.get(c); if(cn && !state.activeSecs.has(sectorOf(cn))) return false; } }
+    if(q && !n.label.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+/* ---- render ---- */
+function render(){
+  const M = state._m || (state._m = model());
+  buildLegends(M);
+  const visN = visibleNodes(M);
+  const vis = new Set(visN.map(n=>n.id));
+  const showStruct = true;
+  const semantic = M.links.filter(l=> state.activeRels.has(l.rel) && vis.has(l.source) && vis.has(l.target));
+  const struct = showStruct ? M.synthLinks.filter(l=> vis.has(l.source) && vis.has(l.target)) : [];
+
+  if(state.view==='radial'){
+    const pos = radial(M, visN);
+    visN.forEach(n=>{ const p=pos[n.id]||{x:0,y:0}; n.x=p.x; n.y=p.y; n.fx=p.x; n.fy=p.y; });
+  } else {
+    visN.forEach(n=>{ const p=state.pos[n.id]; if(p){n.x=p.x;n.y=p.y;} n.fx=null; n.fy=null; });
+  }
+
+  d3.select('#g').selectAll('*').remove();
+  svg=d3.select('#g'); root=svg.append('g');
+  const W=svg.node().clientWidth, H=svg.node().clientHeight;
+  zoom=d3.zoom().scaleExtent([0.1,4]).on('zoom',ev=>{ state.t=ev.transform; root.attr('transform',ev.transform); });
+  svg.call(zoom).on('dblclick.zoom',null);
+
+  const linkData=[...struct, ...semantic];
+  const link=root.append('g').selectAll('path').data(linkData).join('path')
+    .attr('fill','none')
+    .attr('stroke',d=> d.rel==='__hub' ? '#e2e6ee' : relColor(d.rel))
+    .attr('stroke-width',d=> d.rel==='__hub'?1:1.3)
+    .attr('stroke-opacity',d=> d.rel==='__hub'?.45:.6);
+
+  const idMap=new Map(visN.map(n=>[n.id,n]));
+  const g=root.append('g').selectAll('g.n').data(visN).join('g').attr('class','n')
+    .style('cursor','pointer')
+    .on('click',(ev,d)=>{ if(d.type==='hub'||d.type==='sector') return; state.sel=d; detail(d,M); highlight(d,idMap,M); })
+    .on('mouseover',(ev,d)=>highlight(d,idMap,M))
+    .on('mouseout',()=>unhighlight())
+    .call(d3.drag()
+      .on('start',(ev,d)=>{ if(state.view==='force'&&sim&&!ev.active) sim.alphaTarget(.2).restart(); d.fx=d.x;d.fy=d.y; })
+      .on('drag',(ev,d)=>{ d.fx=ev.x;d.fy=ev.y; if(state.view==='radial'){d.x=ev.x;d.y=ev.y;ticked();} })
+      .on('end',(ev,d)=>{ if(state.view==='force'&&sim&&!ev.active) sim.alphaTarget(0); }));
+
+  g.each(function(d){
+    const s=d3.select(this);
+    if(d.type==='hub'){
+      s.append('rect').attr('x',-17).attr('y',-17).attr('width',34).attr('height',34).attr('rx',9)
+        .attr('fill','#0e1726');
+      s.append('text').attr('text-anchor','middle').attr('dy',6).attr('fill','#fff')
+        .attr('font-weight',800).attr('font-size',16).text('D');
+    } else if(d.type==='sector'){
+      const c=state.sectorColor[d.sector]||'#475569';
+      s.append('circle').attr('r',13+Math.min(8,Math.sqrt(d.degree)*2)).attr('fill',c)
+        .attr('stroke','#fff').attr('stroke-width',2.5);
+      s.append('text').attr('text-anchor','middle').attr('dy',5).attr('fill','#fff')
+        .attr('font-weight',800).attr('font-size',11).text(initials(d.label));
+    } else if(d.type==='company'){
+      const c=state.sectorColor[sectorOf(d)]||TYPE_COLORS.company;
+      const w=22;
+      s.append('rect').attr('x',-w/2).attr('y',-w/2).attr('width',w).attr('height',w).attr('rx',6)
+        .attr('fill',c).attr('stroke','#fff').attr('stroke-width',2);
+      s.append('text').attr('text-anchor','middle').attr('dy',4).attr('fill','#fff')
+        .attr('font-weight',800).attr('font-size',11).text(d.label[0].toUpperCase());
+    } else if(d.type==='person'){
+      s.append('circle').attr('r',9).attr('fill',TYPE_COLORS.person).attr('stroke','#fff').attr('stroke-width',2);
+      s.append('text').attr('text-anchor','middle').attr('dy',3.2).attr('fill','#fff')
+        .attr('font-weight',800).attr('font-size',8.5).text(initials(d.label));
+    } else if(d.type==='deal'){
+      s.append('circle').attr('r',7).attr('fill',TYPE_COLORS.deal).attr('stroke','#fff').attr('stroke-width',1.6);
+    } else { // document & others
+      s.append('circle').attr('r',4.5).attr('fill',TYPE_COLORS[d.type]||'#94a3b8').attr('opacity',.85);
+    }
+    s.append('title').text(`${d.type}: ${d.label}`);
+  });
+
+  const labels=root.append('g').selectAll('text').data(
+      visN.filter(d=> d.type==='hub'||d.type==='sector'||d.type==='company'))
+    .join('text').attr('class',d=>(d.type==='sector'||d.type==='hub')?'hub-label':'node-label')
+    .attr('text-anchor','middle').attr('dy',d=> d.type==='sector'?28:(d.type==='hub'?32:18))
+    .text(d=> d.label.length>22?d.label.slice(0,21)+'…':d.label);
+
+  function ticked(){
+    link.attr('d',d=>{ const a=idMap.get(typeof d.source==='object'?d.source.id:d.source)||d.source,
+                              b=idMap.get(typeof d.target==='object'?d.target.id:d.target)||d.target;
+      const sx=a.x,sy=a.y,tx=b.x,ty=b.y, dx=tx-sx,dy=ty-sy, dr=Math.hypot(dx,dy)*3.2||1;
+      return `M${sx},${sy}A${dr},${dr} 0 0,1 ${tx},${ty}`; });
+    g.attr('transform',d=>`translate(${d.x},${d.y})`);
+    labels.attr('x',d=>d.x).attr('y',d=>d.y);
+  }
+  state._ticked=ticked;
+
+  if(state.view==='force'){
+    const lk=[...semantic, ...struct].map(l=>({source:l.source,target:l.target,rel:l.rel}));
+    sim=d3.forceSimulation(visN)
+      .force('link',d3.forceLink(lk).id(d=>d.id).distance(d=>d.rel==='__hub'?80:60).strength(.35))
+      .force('charge',d3.forceManyBody().strength(-220))
+      .force('center',d3.forceCenter(0,0))
+      .force('collide',d3.forceCollide(18))
+      .on('tick',()=>{ ticked(); visN.forEach(n=>state.pos[n.id]={x:n.x,y:n.y}); });
+  } else { sim=null; ticked(); }
+
+  fit(visN,W,H);
+  document.getElementById('c-ent').textContent = state.raw.nodes.length;
+  document.getElementById('c-con').textContent = state.raw.edges.length;
+}
+
+function fit(nodes,W,H){
+  if(!nodes.length) return;
+  const xs=nodes.map(n=>n.x), ys=nodes.map(n=>n.y);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const gw=(x1-x0)||1, gh=(y1-y0)||1, pad=70;
+  const k=Math.min((W-pad)/gw,(H-pad)/gh,1.6);
+  const tx=W/2-k*(x0+x1)/2, ty=H/2-k*(y0+y1)/2;
+  const t=d3.zoomIdentity.translate(tx,ty).scale(k);
+  svg.call(zoom.transform,t); state.t=t;
+}
+
+function highlight(d,idMap,M){
+  const keep=new Set([d.id]);
+  [...M.links,...M.synthLinks].forEach(l=>{ if(l.source===d.id)keep.add(l.target); if(l.target===d.id)keep.add(l.source); });
+  root.selectAll('g.n').style('opacity',n=> keep.has(n.id)?1:.12);
+  root.selectAll('path').style('opacity',l=>{ const s=typeof l.source==='object'?l.source.id:l.source,
+    t=typeof l.target==='object'?l.target.id:l.target; return (s===d.id||t===d.id)?.95:.05; });
+}
+function unhighlight(){ if(state.sel) return;
+  root.selectAll('g.n').style('opacity',1); root.selectAll('path').style('opacity',null); }
+
+function initials(s){ return s.split(/[\s—\-]+/).filter(Boolean).slice(0,2).map(w=>w[0]).join('').toUpperCase(); }
+
+function detail(d,M){
+  const el=document.getElementById('detail'); el.classList.add('show');
+  const col = d.type==='company'? (state.sectorColor[sectorOf(d)]||TYPE_COLORS.company) : (TYPE_COLORS[d.type]||'#64748b');
+  const nbrs=[...M.links].filter(l=>l.source===d.id||l.target===d.id).map(l=>{
+    const oid=l.source===d.id?l.target:l.source; const o=M.byId.get(oid)||{label:oid,type:''};
+    return `<li>${l.source===d.id?'→':'←'} <b>${l.rel}</b> ${o.label}</li>`; });
+  const a=d.attrs||{};
+  const sub = d.type==='company' ? [a.sector,a.stage].filter(Boolean).join(' · ')
+            : d.type==='person'  ? [a.role,a.company].filter(Boolean).join(' · ')
+            : d.type==='deal'    ? [a.round_type, a.ask_inr_cr?('Ask ₹'+a.ask_inr_cr+'cr'):null, a.valuation_inr_cr?('Val ₹'+a.valuation_inr_cr+'cr'):null].filter(Boolean).join(' · ')
+            : '';
+  el.innerHTML=`<span class="x" onclick="document.getElementById('detail').classList.remove('show');state.sel=null;unhighlight()">×</span>
+    <span class="type" style="background:${col}">${d.type}</span>
+    <h2>${d.label}</h2>${sub?`<div class="sub">${sub}</div>`:''}
+    <ul>${nbrs.slice(0,16).join('')}</ul>${nbrs.length>16?`<div class="hint">+${nbrs.length-16} more…</div>`:''}
+    ${Object.keys(a).length?`<pre>${JSON.stringify(a,null,1)}</pre>`:''}`;
+}
+
+/* ---- legends ---- */
+function row(parent,color,label,count,on,onToggle,onOnly){
+  const lab=document.createElement('label'); lab.className=on?'':'off';
+  lab.innerHTML=`<span class="box" style="border-color:${color};background:${on?color:'transparent'};color:${on?'#fff':'transparent'}">${on?'✓':''}</span>${label}<span class="cnt">${count}</span><span class="only">only</span>`;
+  lab.onclick=onToggle; lab.querySelector('.only').onclick=e=>{e.stopPropagation();onOnly();};
+  parent.appendChild(lab);
+}
+function buildLegends(M){
+  const types=['company','person','deal','document'];
+  const tl=document.getElementById('legend'); tl.innerHTML='';
+  types.forEach(t=>{ const c=M.all.filter(n=>n.type===t).length; if(!c)return;
+    row(tl,TYPE_COLORS[t],t,c,state.active.has(t),
+      ()=>{state.active.has(t)?state.active.delete(t):state.active.add(t);render();},
+      ()=>{state.active=new Set([t]);render();}); });
+  const sl=document.getElementById('sectors'); sl.innerHTML='';
+  M.sectors.forEach(s=>{ const c=M.all.filter(n=>n.type==='company'&&sectorOf(n)===s).length;
+    row(sl,state.sectorColor[s],s,c,state.activeSecs.has(s),
+      ()=>{state.activeSecs.has(s)?state.activeSecs.delete(s):state.activeSecs.add(s);render();},
+      ()=>{state.activeSecs=new Set([s]);render();}); });
+  const rl=document.getElementById('rels'); rl.innerHTML='';
+  const rc={}; M.links.forEach(e=>rc[e.rel]=(rc[e.rel]||0)+1);
+  Object.keys(rc).sort((a,b)=>rc[b]-rc[a]).forEach(r=>{
+    row(rl,relColor(r),r,rc[r],state.activeRels.has(r),
+      ()=>{state.activeRels.has(r)?state.activeRels.delete(r):state.activeRels.add(r);render();},
+      ()=>{state.activeRels=new Set([r]);render();}); });
+}
+
+/* ---- boot ---- */
+function load(data){
+  state.raw=data; state._m=null; state.pos={}; state.sel=null;
+  state.active=new Set(['company','person','deal']);            // documents off by default (toggle on)
+  state.activeRels=new Set(data.edges.map(e=>e.rel).filter(r=>!NOISY_RELS.has(r)));
+  const secs=[...new Set(data.nodes.filter(n=>n.type==='company').map(sectorOf))];
+  state.activeSecs=new Set(secs);
+  render();
+}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+  t.classList.add('on'); state.view=t.dataset.view; state.sel=null; render(); });
+document.getElementById('q').addEventListener('input',()=>render());
+document.getElementById('t-all').onclick=()=>{state.active=new Set(['company','person','deal','document']);render();};
+document.getElementById('t-none').onclick=()=>{state.active=new Set();render();};
+document.getElementById('s-all').onclick=()=>{state.activeSecs=new Set(state._m.sectors);render();};
+document.getElementById('s-none').onclick=()=>{state.activeSecs=new Set();render();};
+document.getElementById('r-all').onclick=()=>{state.activeRels=new Set(state.raw.edges.map(e=>e.rel));render();};
+document.getElementById('r-none').onclick=()=>{state.activeRels=new Set();render();};
+document.getElementById('filein').addEventListener('change',ev=>{const f=ev.target.files[0];if(f)f.text().then(t=>load(JSON.parse(t)));});
+fetch('graph.json').then(r=>r.json()).then(load)
+  .catch(()=>{document.getElementById('c-ent').textContent='graph.json not found — use the file picker';});
+window.addEventListener('resize',()=>state.raw&&render());
+</script>
+</body>
+</html>

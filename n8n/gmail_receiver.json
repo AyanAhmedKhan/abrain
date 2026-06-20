@@ -1,0 +1,176 @@
+{
+  "name": "gbrain - Gmail Receiver (broad + classifier)",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "-in:spam -in:trash -in:chats -category:promotions -category:social"
+        },
+        "options": {
+          "downloadAttachments": true,
+          "dataPropertyAttachmentsPrefixName": "attachment_"
+        }
+      },
+      "id": "b2000000-0000-0000-0000-000000000001",
+      "name": "Gmail: new call-notes email",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_GMAIL_CRED_ID",
+          "name": "Gmail (Dexter)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\nins as (\n  insert into gb_raw (source, source_id, payload)\n  select 'gmail', p->>'id', p from payload\n  where p->>'id' is not null\n  on conflict (source, source_id) do nothing\n  returning id\n)\nselect pgmq.send('gb_q_normalize', jsonb_build_object('raw_id', id::text)) as msg_id from ins;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json) }}"
+        }
+      },
+      "id": "b2000000-0000-0000-0000-000000000002",
+      "name": "Land Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        240,
+        -120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_SUPABASE_CRED_ID",
+          "name": "Supabase Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// One output item per PDF attachment, with its sha256 + metadata.\nconst crypto = require('crypto');\nconst out = [];\nfor (let i = 0; i < items.length; i++) {\n  const bin = items[i].binary || {};\n  for (const key of Object.keys(bin)) {\n    if (!key.startsWith('attachment_')) continue;\n    const meta = bin[key];\n    if ((meta.mimeType || '').indexOf('pdf') === -1 && !(meta.fileName||'').toLowerCase().endsWith('.pdf')) continue;\n    const buf = await this.helpers.getBinaryDataBuffer(i, key);\n    const hash = crypto.createHash('sha256').update(buf).digest('hex');\n    out.push({ json: {\n        gmail_message_id: items[i].json.id,\n        thread_id: items[i].json.threadId,\n        filename: meta.fileName || (hash + '.pdf'),\n        mime: meta.mimeType || 'application/pdf',\n        hash: hash,\n        storage_path: hash + '.pdf'\n      }, binary: { data: meta }, pairedItem: { item: i } });\n  }\n}\nreturn out;"
+      },
+      "id": "b2000000-0000-0000-0000-000000000003",
+      "name": "Each PDF + sha256",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/storage/v1/object/gbrain-bronze/{{ $json.storage_path }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_KEY }}"
+            },
+            {
+              "name": "x-upsert",
+              "value": "true"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "b2000000-0000-0000-0000-000000000004",
+      "name": "Upload PDF to bronze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with payload as (select $1::jsonb as p),\nins as (\n  insert into gb_raw (source, source_id, payload, storage_ref, content_hash)\n  select 'pdf', p->>'hash', p, 'gbrain-bronze/' || (p->>'storage_path'), p->>'hash' from payload\n  on conflict (source, source_id) do nothing\n  returning id\n)\nselect pgmq.send('gb_q_normalize', jsonb_build_object('raw_id', id::text)) as msg_id from ins;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({ filename: $('Each PDF + sha256').item.json.filename, mime: $('Each PDF + sha256').item.json.mime, hash: $('Each PDF + sha256').item.json.hash, storage_path: $('Each PDF + sha256').item.json.storage_path, storage_ref: 'gbrain-bronze/' + $('Each PDF + sha256').item.json.storage_path, gmail_message_id: $('Each PDF + sha256').item.json.gmail_message_id, thread_id: $('Each PDF + sha256').item.json.thread_id, gbrain_labels: ['call-notes'] }) }}"
+        }
+      },
+      "id": "b2000000-0000-0000-0000-000000000005",
+      "name": "Land PDF",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        120
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_SUPABASE_CRED_ID",
+          "name": "Supabase Postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Gmail: new call-notes email": {
+      "main": [
+        [
+          {
+            "node": "Land Email",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Each PDF + sha256",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Each PDF + sha256": {
+      "main": [
+        [
+          {
+            "node": "Upload PDF to bronze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload PDF to bronze": {
+      "main": [
+        [
+          {
+            "node": "Land PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false
+}

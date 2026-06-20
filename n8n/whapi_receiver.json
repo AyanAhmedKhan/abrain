@@ -1,0 +1,61 @@
+{
+  "name": "gbrain - Whapi Receiver (Phase 0)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whapi-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a1000000-0000-0000-0000-000000000001",
+      "name": "Whapi Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "webhookId": "gbrain-whapi-intake"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "with ins as (\n  insert into gb_raw (source, source_id, payload)\n  select 'whatsapp', m->>'id', m\n  from jsonb_array_elements(coalesce(($1::jsonb)->'messages', '[]'::jsonb)) m\n  where m->>'id' is not null\n  on conflict (source, source_id) do nothing\n  returning id\n)\nselect pgmq.send('gb_q_normalize', jsonb_build_object('raw_id', id::text)) as msg_id\nfrom ins;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.body) }}"
+        }
+      },
+      "id": "a1000000-0000-0000-0000-000000000002",
+      "name": "Land Raw + Enqueue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "credentials": {
+        "postgres": {
+          "id": "REPLACE_WITH_YOUR_SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase Postgres (direct, 5432)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"ok\": true } }}",
+        "options": {}
+      },
+      "id": "a1000000-0000-0000-0000-000000000003",
+      "name": "200 OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 0]
+    }
+  ],
+  "connections": {
+    "Whapi Webhook": {
+      "main": [[{ "node": "Land Raw + Enqueue", "type": "main", "index": 0 }]]
+    },
+    "Land Raw + Enqueue": {
+      "main": [[{ "node": "200 OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "active": false
+}

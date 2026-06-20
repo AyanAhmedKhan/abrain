@@ -1,0 +1,9 @@
+# gbrain · worker dependencies (M0 + M1)
+psycopg[binary]>=3.1
+python-dotenv>=1.0
+httpx>=0.27           # Supabase Storage REST
+pymupdf>=1.24         # PDF text extraction (native PDFs)
+google-genai>=1.0     # Gemini analysis + embeddings (Vertex or API key)
+google-api-python-client>=2.0  # Gmail API (standalone connector)
+google-auth>=2.0      # service-account + domain-wide delegation for Gmail
+google-auth-oauthlib>=1.0  # one-time Gmail OAuth helper (gmail_auth.py)

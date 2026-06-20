@@ -1,0 +1,15 @@
+# gbrain · run the sweeper every 5 minutes
+# Install: copy both gbrain-sweeper.{service,timer} to /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gbrain-sweeper.timer
+# Check:   systemctl list-timers gbrain-sweeper.timer
+[Unit]
+Description=Run gbrain sweeper every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

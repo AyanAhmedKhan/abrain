@@ -1,0 +1,11 @@
+# gbrain · regenerate the Obsidian vault every 10 minutes
+[Unit]
+Description=Regenerate the gbrain Obsidian vault every 10 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=10min
+AccuracySec=60s
+
+[Install]
+WantedBy=timers.target

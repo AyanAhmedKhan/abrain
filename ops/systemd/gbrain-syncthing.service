@@ -1,0 +1,14 @@
+# gbrain · Syncthing — shares /opt/gbrain/vault (send-only) to your laptop's Obsidian.
+[Unit]
+Description=gbrain Syncthing (vault live-sync)
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=gbrain
+Environment=HOME=/opt/gbrain
+ExecStart=/usr/local/bin/syncthing serve --no-browser --no-restart --home=/opt/gbrain/.config/syncthing --gui-address=127.0.0.1:8384
+Restart=always
+RestartSec=5
+SuccessExitStatus=3 4
+[Install]
+WantedBy=multi-user.target

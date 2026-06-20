@@ -1,0 +1,11 @@
+# gbrain · re-export the knowledge graph every 5 minutes (keeps the viewer fresh)
+[Unit]
+Description=Refresh gbrain graph.json every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,20 @@
+# gbrain · Gmail connector (oneshot, driven by gbrain-gmail.timer)
+# Polls the Workspace mailbox once and lands gb_raw rows. Stays dumb;
+# the 005 trigger enqueues normalize, the classifier decides downstream.
+# Install: copy gbrain-gmail.{service,timer} to /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gbrain-gmail.timer
+# Logs:   journalctl -u gbrain-gmail -f
+[Unit]
+Description=gbrain Gmail connector (poll + land)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.connectors.gmail --once
+StandardOutput=journal
+StandardError=journal

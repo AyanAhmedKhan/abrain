@@ -1,0 +1,30 @@
+# gbrain · preprocess worker as a managed service
+# Install: copy to /etc/systemd/system/gbrain-preprocess.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gbrain-preprocess
+# Logs:   journalctl -u gbrain-preprocess -f
+#
+# Assumes the repo lives at /opt/gbrain with a venv at /opt/gbrain/.venv
+# and a populated /opt/gbrain/.env (DATABASE_URL = Supabase direct, 5432).
+
+[Unit]
+Description=gbrain preprocess worker
+After=network-online.target
+Wants=network-online.target
+# crash-loop guard: if it dies 5x in 60s, stop rather than spin
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.preprocess
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+# gbrain · Obsidian vault export (oneshot, driven by gbrain-vault.timer)
+# Regenerates /opt/gbrain/vault from the database so it tracks new ingestion.
+[Unit]
+Description=gbrain Obsidian vault export
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.obsidian_export
+StandardOutput=journal
+StandardError=journal

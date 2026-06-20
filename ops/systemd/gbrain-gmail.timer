@@ -1,0 +1,15 @@
+# gbrain · run the Gmail connector every minute
+# Install: copy both gbrain-gmail.{service,timer} to /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gbrain-gmail.timer
+# Check:   systemctl list-timers gbrain-gmail.timer
+[Unit]
+Description=Run gbrain Gmail connector every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

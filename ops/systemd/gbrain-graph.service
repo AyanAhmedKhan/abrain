@@ -1,0 +1,14 @@
+# gbrain · refresh the viewer's graph.json (oneshot, driven by gbrain-graph.timer)
+[Unit]
+Description=gbrain graph export (refresh viewer/graph.json)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.graph_export /opt/gbrain/viewer/graph.json
+StandardOutput=journal
+StandardError=journal
