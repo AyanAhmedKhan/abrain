@@ -66,6 +66,25 @@ Legend: ✅ done & verified · 🟡 partial / in progress · ⬜ not started
 - ✅ **Taxonomy rules** (`workers/lib/taxonomy.py`): canonical sectors/stages, VC/PE/VD/AM/IB/Law-Firm typing, Dexter team roster + email detection, alias generation — applied in both the vault and the DB layer.
 - ✅ **Bug-fix pass** (independent review): FK-safe test cleanup, safe numeric rendering, deterministic observation ordering, unquoted ISO dates for Bases, RFC-2822 contact parsing, PDF note labeling, Dexter-team People rows, investor `stage_focus`. Gate 0 + Gate M1 green.
 
+### Edge-case hardening (2026-06-20)
+Full reliability pass; `tests/test_edges.py` + Gate 0 + Gate M1 all green.
+- **Self-healing pipeline**: `sweeper.py` now re-enqueues envelopes stuck in any
+  non-terminal status (the manual-recovery gap) — `STUCK_GRACE_MINUTES` (20).
+- **Gemini drift tolerated**: `workers/lib/num.py:safe_num` coerces "40-60"/"$5M"/"~40"
+  before numeric inserts (no more DLQ); `gemini._result` salvages/falls back to a
+  low-confidence stub on bad JSON; `_coerce` handles arrays.
+- **Embedding safety**: `preprocess.chunk_text` hard-splits oversized paragraphs;
+  `embed.py` truncates any chunk over the model limit — one big chunk can't strand an item.
+- **Cost rail**: `extract.py` daily LLM budget cap (`LLM_DAILY_BUDGET_USD`, default $25 ≈ ₹2,100) + escalation logging; retry backoff in every worker.
+- **Connector resilience**: per-mailbox auth isolation (one revoked token can't blind the
+  rest) + refresh persisted to disk; per-message try/except with cursor advanced only after
+  full land; safe internalDate; backfill-cap warning; advisory lock vs overlapping polls;
+  DB reconnect; attachment size cap.
+- **Atomic vault**: generated into a temp dir and swapped in — a mid-run crash never leaves
+  Syncthing an empty/partial vault; per-row try/except; long-name hash suffix.
+- **Dashboard resilience**: `app/error.tsx` + `app/not-found.tsx`; `lib/data.ts` fails soft
+  (graceful empty state, not a 500); guarded URL decode + NaN-safe spend formatting.
+
 ### Future milestones
 - ⬜ **M2 — WhatsApp** (Whapi) into the same pipeline; run alongside the legacy Notes Agent until a 10-deck parity check.
 - ⬜ **M3 — Calendar + Drive + internal dashboard** spine.
