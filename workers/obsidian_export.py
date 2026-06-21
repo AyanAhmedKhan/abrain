@@ -364,7 +364,13 @@ def email_filename(date, title, sid):
 
 # ── renderers ────────────────────────────────────────────────
 
-def render_company(c, obs, referred):
+def wl_or_text(name, ref_names, folder="References"):
+    """Wikilink only when a note for `name` actually exists, else plain text —
+    keeps the graph clean (no dangling links to un-tracked investors/companies)."""
+    return wl(name, folder) if name in (ref_names or ()) else (name or "")
+
+
+def render_company(c, obs, referred, ref_names=frozenset()):
     name = c["name"]
     secs = sectors_of(c["sector"]) or sectors_of(c["sub_sector"])
     cats = [f"[[Categories/{safe_name(s)}]]" for s in secs]
@@ -405,7 +411,7 @@ def render_company(c, obs, referred):
             fm_scalar("valuation_inr_cr", c["valuation"]),
             fm_scalar("ebitda", cr(c["ebitda"])),
             fm_scalar("ask", cr(c["ask"])),
-            fm_list("referred_by", [wl(c["referred_by"])] if c["referred_by"] else []),
+            fm_list("referred_by", [wl_or_text(c["referred_by"], ref_names)] if c["referred_by"] else []),
         ]
     else:
         stage_links = [f"[[Categories/{safe_name(stage)}]]"] if stage else []
@@ -497,7 +503,7 @@ def render_company(c, obs, referred):
     body += ["## Existing Investors", "", "| Investor | Stake | Round | Notes |",
              "|----------|-------|-------|-------|"]
     if c["existing_investors"]:
-        body += [f"| {wl(inv)} | | | |" for inv in c["existing_investors"]]
+        body += [f"| {wl_or_text(inv, ref_names)} | | | |" for inv in c["existing_investors"]]
     else:
         body.append("| | | | |")
     body.append("")
@@ -751,6 +757,27 @@ def write_people_base(dest):
         _write(p, PEOPLE_BASE)
 
 
+# non-sector MOC notes our notes link to but the exporter doesn't generate.
+# (Sector category notes ARE generated fresh by render_category — copying Yash's
+# hand-curated sector MOCs would drag in hundreds of stale links to his old data.)
+_MOC_NOTES = ("People.md", "Companies.md", "Deals.md", "Pipeline.md")
+
+
+def copy_category_mocs(dest):
+    """Restore only the base-backed MOC notes ([[People]], [[Companies]],
+    [[Deals]]) so category links resolve, WITHOUT importing the source's curated
+    sector notes (which carry stale links to a different dataset)."""
+    src = os.path.join(SRC, "Categories")
+    dst = os.path.join(dest, "Categories")
+    if not os.path.isdir(src):
+        return
+    os.makedirs(dst, exist_ok=True)
+    for fn in _MOC_NOTES:
+        s = os.path.join(src, fn)
+        if os.path.isfile(s):
+            shutil.copy2(s, os.path.join(dst, fn))
+
+
 def render_category(sector):
     return ("---\ntags:\n  - categories\n---\n\n## Companies\n\n"
             "![[Companies by Sector.base]]\n\n## Deals\n\n![[Deals by Sector.base]]\n\n"
@@ -791,6 +818,7 @@ def build_vault(dest, conn):
     _email_seen.clear()
     scaffold(dest)
     write_people_base(dest)   # enrich the People base with LinkedIn/profile columns
+    copy_category_mocs(dest)  # restore People/Companies/Deals + sector MOC notes
     companies, emails, people, obs, referred = build_model(conn)
     # normalized company-name → canonical note name, for wikilinking experience
     # companies in person notes to the right (deduped) company note.
@@ -805,11 +833,12 @@ def build_vault(dest, conn):
             sectors.add(tc)
 
     written = set()   # reference filenames already taken (company wins over person)
+    ref_names = set(companies) | set(people)   # which References notes exist (link-if-exists)
     errs = 0
     for c in companies.values():
         try:
             fn = safe_name(c["name"]) + ".md"
-            _write(os.path.join(dest, "References", fn), render_company(c, obs, referred))
+            _write(os.path.join(dest, "References", fn), render_company(c, obs, referred, ref_names))
             written.add(fn.lower())
         except Exception as e:
             errs += 1; print(f"[vault] skip company {c.get('name')!r}: {e!r}", flush=True)
