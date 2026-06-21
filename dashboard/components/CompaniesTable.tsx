@@ -10,7 +10,7 @@ type SortKey = "company" | "sector" | "stage" | "ask_inr_cr" | "valuation_inr_cr
 const num = (v: string | null) => (v === null || v === "" ? -Infinity : parseFloat(v));
 
 const selectCls =
-  "px-2.5 py-2 rounded-lg border border-line bg-white text-sm text-ink outline-none transition-colors hover:border-cream focus:border-accent focus:ring-2 focus:ring-mint/15";
+  "px-2.5 py-2 rounded-lg border border-line bg-panel text-sm text-ink outline-none transition-colors hover:border-accent/40 focus:border-accent focus:ring-2 focus:ring-accent/15";
 
 export default function CompaniesTable({ companies }: { companies: Company[] }) {
   const [search, setSearch] = useState("");
@@ -61,11 +61,11 @@ export default function CompaniesTable({ companies }: { companies: Company[] }) 
 
   return (
     <div className="card overflow-hidden">
-      <div className="flex flex-wrap gap-2 items-center p-3 border-b border-line bg-white">
+      <div className="flex flex-wrap gap-2 items-center p-3 border-b border-line bg-panel">
         <div className="relative flex-1 min-w-[220px]">
           <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-dim pointer-events-none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></svg>
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search company, sector, summary…"
-            className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-[#FBFAF6] text-sm outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-mint/15" />
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-line bg-raised text-sm outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15" />
         </div>
         <select value={sector} onChange={(e) => setSector(e.target.value)} className={selectCls}>
           <option value="">All sectors</option>{sectors.map((x) => <option key={x}>{x}</option>)}
@@ -80,7 +80,7 @@ export default function CompaniesTable({ companies }: { companies: Company[] }) 
           type="button"
           onClick={() => setDealsOnly((v) => !v)}
           aria-pressed={dealsOnly}
-          className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${dealsOnly ? "bg-minttint text-mintdark border-mint/30" : "bg-white text-dim border-line hover:text-ink hover:border-cream"}`}>
+          className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${dealsOnly ? "bg-accenttint text-accentink border-accent/30" : "bg-panel text-dim border-line hover:text-ink hover:border-accent/40"}`}>
           Deals only
         </button>
         <span className="text-dim text-sm ml-auto tabular-nums">
@@ -89,7 +89,7 @@ export default function CompaniesTable({ companies }: { companies: Company[] }) 
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
-          <thead className="text-dim bg-[#F7F3EC] border-b border-line">
+          <thead className="text-dim bg-raised border-b border-line">
             <tr>
               <Th k="company" label="Company" /><Th k="sector" label="Sector" /><Th k="stage" label="Stage" />
               <th className="px-3 py-2.5 text-left font-semibold uppercase tracking-wider text-[11px]">POC</th>
@@ -100,10 +100,10 @@ export default function CompaniesTable({ companies }: { companies: Company[] }) 
           </thead>
           <tbody>
             {rows.map((c) => (
-              <tr key={c.company} className="border-b border-line/70 last:border-0 hover:bg-[#FAF7F1] transition-colors">
+              <tr key={c.company} className="border-b border-line/70 last:border-0 hover:bg-wash transition-colors">
                 <td className="px-3 py-2.5">
                   <Link href={`/companies/${encodeURIComponent(c.company)}`} className="text-accent hover:underline font-medium">{c.company}</Link>
-                  {c.has_deal && <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded-full bg-minttint text-mintdark font-semibold ring-1 ring-inset ring-mint/15">DEAL</span>}
+                  {c.has_deal && <span className="ml-2 align-middle text-[10px] px-1.5 py-0.5 rounded-full bg-accenttint text-accentink font-semibold ring-1 ring-inset ring-accent/15">DEAL</span>}
                 </td>
                 <td className="px-3 py-2.5">{c.sector ?? "—"}</td>
                 <td className="px-3 py-2.5">{c.stage ?? "—"}</td>

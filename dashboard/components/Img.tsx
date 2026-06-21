@@ -14,9 +14,9 @@ export function Avatar({ src, name, size = 28 }: { src?: string | null; name?: s
   if (url && !err) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={url} alt="" style={style} onError={() => setErr(true)}
-                className="rounded-full object-cover bg-cream shrink-0 ring-1 ring-black/5" />;
+                className="rounded-full object-cover bg-raised shrink-0 ring-1 ring-black/5 dark:ring-white/10" />;
   }
-  return <span style={style} className="rounded-full bg-gradient-to-br from-minttint to-cream text-mintdark font-semibold inline-flex items-center justify-center shrink-0 ring-1 ring-black/5">{initial(name)}</span>;
+  return <span style={style} className="rounded-full bg-gradient-to-br from-accenttint to-raised text-accentink font-semibold inline-flex items-center justify-center shrink-0 ring-1 ring-black/5 dark:ring-white/10">{initial(name)}</span>;
 }
 
 export function Logo({ src, name, size = 36 }: { src?: string | null; name?: string; size?: number }) {
@@ -26,7 +26,7 @@ export function Logo({ src, name, size = 36 }: { src?: string | null; name?: str
   if (url && !err) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={url} alt="" style={style} onError={() => setErr(true)}
-                className="rounded-lg object-contain bg-white shrink-0 ring-1 ring-black/5 p-0.5" />;
+                className="rounded-lg object-contain bg-white shrink-0 ring-1 ring-black/5 dark:ring-white/10 p-0.5" />;
   }
-  return <span style={style} className="rounded-lg bg-gradient-to-br from-minttint to-cream text-mintdark inline-flex items-center justify-center font-bold shrink-0 ring-1 ring-black/5">{initial(name)}</span>;
+  return <span style={style} className="rounded-lg bg-gradient-to-br from-accenttint to-raised text-accentink inline-flex items-center justify-center font-bold shrink-0 ring-1 ring-black/5 dark:ring-white/10">{initial(name)}</span>;
 }

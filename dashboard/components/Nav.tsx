@@ -25,8 +25,8 @@ export default function Nav() {
             aria-current={on ? "page" : undefined}
             className={`px-3.5 py-1.5 rounded-lg text-sm font-medium transition-colors ${
               on
-                ? "bg-minttint text-mintdark shadow-sm ring-1 ring-mint/15"
-                : "text-dim hover:bg-white/70 hover:text-ink"
+                ? "bg-accenttint text-accentink shadow-sm ring-1 ring-accent/15"
+                : "text-dim hover:bg-wash hover:text-ink"
             }`}
           >
             {t.label}

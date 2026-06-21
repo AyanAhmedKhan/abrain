@@ -1,24 +1,16 @@
 import Link from "next/link";
 import { getPerson, getPersonCompanies, getColleagues } from "@/lib/data";
 import { Avatar } from "@/components/Img";
+import { SectionCard, Chip } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-dim text-xs uppercase tracking-wide font-semibold">{label}</div>
+      <div className="text-dim text-[11px] uppercase tracking-wider font-semibold">{label}</div>
       <div className="mt-0.5">{children ?? "—"}</div>
     </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="card p-5">
-      <h2 className="font-semibold mb-3">{title}</h2>
-      {children}
-    </section>
   );
 }
 
@@ -47,20 +39,26 @@ export default async function Page({ params }: { params: { id: string } }) {
     <div className="space-y-5">
       <Link href="/people" className="text-accent hover:underline text-sm">← People</Link>
 
-      <div className="card p-5 flex items-start gap-4">
-        <Avatar src={p.photo_url} name={p.person} size={80} />
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold">{p.person}</h1>
-          {p.headline && <p className="text-dim mt-1">{p.headline}</p>}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm text-dim">
-            {loc && <span>📍 {loc}</span>}
-            {p.followers != null && <span>{p.followers.toLocaleString()} followers</span>}
-            {p.connections != null && <span>{p.connections.toLocaleString()} connections</span>}
-            {p.linkedin_url && (
-              <a href={p.linkedin_url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                {p.public_id ? `in/${p.public_id}` : "LinkedIn ↗"}
-              </a>
-            )}
+      {/* hero */}
+      <div className="card overflow-hidden">
+        <div className="h-20 bg-gradient-to-r from-brand2 to-brand1" />
+        <div className="px-5 pb-5 -mt-10 flex items-end gap-4 flex-wrap">
+          <div className="rounded-full ring-4 ring-panel">
+            <Avatar src={p.photo_url} name={p.person} size={80} />
+          </div>
+          <div className="min-w-0 flex-1 pb-0.5">
+            <h1 className="text-2xl font-bold tracking-tight">{p.person}</h1>
+            {p.headline && <p className="text-dim mt-1">{p.headline}</p>}
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-sm text-dim">
+              {loc && <span>📍 {loc}</span>}
+              {p.followers != null && <span><b className="text-ink font-semibold tabular-nums">{p.followers.toLocaleString()}</b> followers</span>}
+              {p.connections != null && <span><b className="text-ink font-semibold tabular-nums">{p.connections.toLocaleString()}</b> connections</span>}
+              {p.linkedin_url && (
+                <a href={p.linkedin_url} target="_blank" rel="noreferrer" className="text-accent hover:underline font-medium">
+                  {p.public_id ? `in/${p.public_id}` : "LinkedIn ↗"}
+                </a>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -71,7 +69,7 @@ export default async function Page({ params }: { params: { id: string } }) {
         <Field label="LinkedIn ID">{p.public_id}</Field>
         <Field label="Linked companies">
           {companies.length
-            ? <div className="flex flex-wrap gap-1">{companies.map((c) => (
+            ? <div className="flex flex-wrap gap-x-2 gap-y-0.5">{companies.map((c) => (
                 <Link key={c} href={`/companies/${encodeURIComponent(c)}`} className="text-accent hover:underline">{c}</Link>
               ))}</div>
             : "—"}
@@ -79,50 +77,50 @@ export default async function Page({ params }: { params: { id: string } }) {
       </div>
 
       {p.about && (
-        <Section title="About">
+        <SectionCard title="About">
           <p className="text-[15px] leading-relaxed whitespace-pre-line">{p.about}</p>
-        </Section>
+        </SectionCard>
       )}
 
       {exp.length > 0 && (
-        <Section title="Experience">
-          <ul className="space-y-3">
+        <SectionCard title="Experience">
+          <ul className="space-y-4">
             {exp.map((e, i) => (
-              <li key={i} className="border-l-2 border-line pl-3">
-                <div className="font-medium">{[e.position, e.companyName].filter(Boolean).join(" — ")}</div>
-                <div className="text-dim text-xs">
+              <li key={i} className="relative pl-5">
+                <span className="absolute left-0 top-1.5 h-2.5 w-2.5 rounded-full bg-accent ring-4 ring-accent/15" />
+                <span className="absolute left-[4.5px] top-4 bottom-[-1rem] w-px bg-line last:hidden" />
+                <div className="font-medium">{[e.position, e.companyName].filter(Boolean).join(" · ")}</div>
+                <div className="text-dim text-xs mt-0.5">
                   {[[e.start, e.end].filter(Boolean).join(" – "), e.duration, e.employmentType, e.workplaceType, e.location].filter(Boolean).join(" · ")}
                 </div>
-                {e.description && <p className="text-sm mt-1">{e.description}</p>}
+                {e.description && <p className="text-sm mt-1.5 leading-relaxed">{e.description}</p>}
               </li>
             ))}
           </ul>
-        </Section>
+        </SectionCard>
       )}
 
       {edu.length > 0 && (
-        <Section title="Education">
-          <ul className="space-y-2">
+        <SectionCard title="Education">
+          <ul className="space-y-2.5">
             {edu.map((e, i) => (
               <li key={i}>
                 <div className="font-medium">{e.schoolName}</div>
-                <div className="text-dim text-xs">{[[e.degree, e.fieldOfStudy].filter(Boolean).join(", "), e.period, e.insights].filter(Boolean).join(" · ")}</div>
+                <div className="text-dim text-xs mt-0.5">{[[e.degree, e.fieldOfStudy].filter(Boolean).join(", "), e.period, e.insights].filter(Boolean).join(" · ")}</div>
               </li>
             ))}
           </ul>
-        </Section>
+        </SectionCard>
       )}
 
       {skills.length > 0 && (
-        <Section title="Skills">
-          <div className="flex flex-wrap gap-1.5">
-            {skills.map((s) => <span key={s} className="px-2 py-0.5 rounded-full text-xs bg-cream text-ink/70">{s}</span>)}
-          </div>
-        </Section>
+        <SectionCard title="Skills">
+          <div className="flex flex-wrap gap-1.5">{skills.map((s) => <Chip key={s}>{s}</Chip>)}</div>
+        </SectionCard>
       )}
 
       {certs.length > 0 && (
-        <Section title="Certifications">
+        <SectionCard title="Certifications">
           <ul className="space-y-1.5 text-sm">
             {certs.map((c, i) => (
               <li key={i}>
@@ -131,11 +129,11 @@ export default async function Page({ params }: { params: { id: string } }) {
               </li>
             ))}
           </ul>
-        </Section>
+        </SectionCard>
       )}
 
       {honors.length > 0 && (
-        <Section title="Honors & Awards">
+        <SectionCard title="Honors & Awards">
           <ul className="space-y-2 text-sm">
             {honors.map((h, i) => (
               <li key={i}>
@@ -145,24 +143,24 @@ export default async function Page({ params }: { params: { id: string } }) {
               </li>
             ))}
           </ul>
-        </Section>
+        </SectionCard>
       )}
 
       {projects.length > 0 && (
-        <Section title="Projects">
+        <SectionCard title="Projects">
           <ul className="space-y-1.5 text-sm">
             {projects.map((pr, i) => (
               <li key={i}><span className="font-medium">{pr.title}</span>{pr.description ? <span className="text-dim"> — {pr.description}</span> : null}</li>
             ))}
           </ul>
-        </Section>
+        </SectionCard>
       )}
 
       {colleagues.length > 0 && (
-        <Section title={`Colleagues (${colleagues.length})`}>
+        <SectionCard title={`Colleagues (${colleagues.length})`}>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {colleagues.map((co) => (
-              <div key={co.entity_id} className="flex items-center gap-3 border border-line rounded-lg p-2.5">
+              <div key={co.entity_id} className="flex items-center gap-3 border border-line rounded-xl p-2.5 transition-colors hover:border-accent/40 hover:bg-wash">
                 <Avatar src={co.photo_url} name={co.person} size={36} />
                 <div className="min-w-0 flex-1">
                   <div className="font-medium truncate">
@@ -178,7 +176,7 @@ export default async function Page({ params }: { params: { id: string } }) {
               </div>
             ))}
           </div>
-        </Section>
+        </SectionCard>
       )}
 
       {p.scraped_at && <p className="text-dim text-xs">Profile scraped {String(p.scraped_at).slice(0, 10)} · LinkedIn via Apify</p>}

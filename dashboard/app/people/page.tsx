@@ -20,7 +20,7 @@ export default async function Page() {
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="text-dim bg-[#F7F3EC] border-b border-line">
+            <thead className="text-dim bg-raised border-b border-line">
               <tr>
                 <th className={th}>Name</th>
                 <th className={th}>Headline / Role</th>
@@ -31,7 +31,7 @@ export default async function Page() {
             </thead>
             <tbody>
               {people.map((p) => (
-                <tr key={p.entity_id} className="border-b border-line/70 last:border-0 hover:bg-[#FAF7F1] transition-colors">
+                <tr key={p.entity_id} className="border-b border-line/70 last:border-0 hover:bg-wash transition-colors">
                   <td className="px-3 py-2.5 font-medium">
                     <div className="flex items-center gap-2.5">
                       <Avatar src={p.photo_url} name={p.person} size={30} />

@@ -4,10 +4,10 @@ export function Badge({ v }: { v: string | null }) {
   if (!v) return <span className="text-dim">—</span>;
   const k = v.toLowerCase();
   const c =
-    k === "high" ? "bg-minttint text-mintdark ring-mint/20"
-    : k === "mid" ? "bg-amber-100 text-amber-700 ring-amber-500/20"
-    : k === "low" ? "bg-rose-100 text-rose-700 ring-rose-500/20"
-    : "bg-cream text-ink/70 ring-black/5";
+    k === "high" ? "bg-accenttint text-accentink ring-accent/20"
+    : k === "mid" ? "bg-amber-100 text-amber-700 ring-amber-500/20 dark:bg-amber-400/15 dark:text-amber-300 dark:ring-amber-400/20"
+    : k === "low" ? "bg-rose-100 text-rose-700 ring-rose-500/20 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-400/20"
+    : "bg-line/50 text-dim ring-line";
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold ring-1 ring-inset ${c}`}>
       {v}
@@ -18,7 +18,16 @@ export function Badge({ v }: { v: string | null }) {
 export function Pill({ children }: { children: React.ReactNode }) {
   if (!children) return null;
   return (
-    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs bg-minttint text-mintdark font-medium ring-1 ring-inset ring-mint/15">
+    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs bg-accenttint text-accentink font-medium ring-1 ring-inset ring-accent/15">
+      {children}
+    </span>
+  );
+}
+
+export function Chip({ children }: { children: React.ReactNode }) {
+  if (!children) return null;
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs bg-raised text-dim ring-1 ring-inset ring-line">
       {children}
     </span>
   );
