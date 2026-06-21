@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, inr } from "@/lib/data";
-import { Badge, Pill } from "@/components/ui";
+import { Badge, Pill, Chip } from "@/components/ui";
 import { Logo, Avatar } from "@/components/Img";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-dim text-xs uppercase tracking-wide font-semibold">{label}</div>
+      <div className="text-dim text-[11px] uppercase tracking-wider font-semibold">{label}</div>
       <div className="mt-0.5">{children ?? "—"}</div>
     </div>
   );
@@ -37,19 +37,27 @@ export default async function Page({ params }: { params: { name: string } }) {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-3 flex-wrap">
-        <Link href="/" className="text-accent hover:underline text-sm">← Dashboard</Link>
-        {lp?.logo_url && <Logo src={lp.logo_url} name={c.company} size={36} />}
-        <h1 className="text-2xl font-bold">{c.company}</h1>
-        {c.has_deal && <span className="text-xs px-2 py-0.5 rounded bg-minttint text-mintdark font-semibold">DEAL</span>}
-        {lp?.linkedin_url && <a href={lp.linkedin_url} target="_blank" rel="noreferrer" className="text-accent hover:underline text-sm">LinkedIn ↗</a>}
-        {(c.aliases ?? []).map((a) => <Pill key={a}>{a}</Pill>)}
+      <Link href="/" className="text-accent hover:underline text-sm">← Dashboard</Link>
+
+      <div className="card p-5 flex items-center gap-4 flex-wrap">
+        {lp?.logo_url && <Logo src={lp.logo_url} name={c.company} size={48} />}
+        <div className="min-w-0">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h1 className="text-2xl font-bold tracking-tight">{c.company}</h1>
+            {c.has_deal && <span className="text-xs px-2 py-0.5 rounded-full bg-accenttint text-accentink font-semibold ring-1 ring-inset ring-accent/15">DEAL</span>}
+          </div>
+          <div className="flex items-center gap-2 flex-wrap mt-1.5 text-sm">
+            {(c.sector || c.stage) && <span className="text-dim">{[c.sector, c.stage].filter(Boolean).join(" · ")}</span>}
+            {lp?.linkedin_url && <a href={lp.linkedin_url} target="_blank" rel="noreferrer" className="text-accent hover:underline">LinkedIn ↗</a>}
+            {(c.aliases ?? []).map((a) => <Pill key={a}>{a}</Pill>)}
+          </div>
+        </div>
       </div>
 
       {lp && (
         <section className="card p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">LinkedIn</h2>
+            <h2 className="section-title">LinkedIn</h2>
             <span className="text-dim text-xs">via Apify{lp.scraped_at ? ` · ${String(lp.scraped_at).slice(0, 10)}` : ""}</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -65,7 +73,7 @@ export default async function Page({ params }: { params: { name: string } }) {
           {lp.description && <p className="text-[15px] leading-relaxed mt-4 whitespace-pre-line">{lp.description}</p>}
           {(lp.specialties ?? []).length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-4">
-              {(lp.specialties ?? []).map((s) => <span key={s} className="px-2 py-0.5 rounded-full text-xs bg-cream text-ink/70">{s}</span>)}
+              {(lp.specialties ?? []).map((s) => <Chip key={s}>{s}</Chip>)}
             </div>
           )}
         </section>
@@ -88,10 +96,10 @@ export default async function Page({ params }: { params: { name: string } }) {
 
       {orgPeople.length > 0 && (
         <section className="card p-5">
-          <h2 className="font-semibold mb-3">People at this company <span className="text-dim font-normal">({orgPeople.length})</span></h2>
+          <h2 className="section-title mb-3">People at this company <span className="text-dim font-normal">({orgPeople.length})</span></h2>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {orgPeople.map((op) => (
-              <div key={op.entity_id} className="flex items-center gap-3 border border-line rounded-lg p-2.5">
+              <div key={op.entity_id} className="flex items-center gap-3 border border-line rounded-xl p-2.5 transition-colors hover:border-accent/40 hover:bg-wash">
                 <Avatar src={op.photo_url} name={op.person} size={36} />
                 <div className="min-w-0 flex-1">
                   <div className="font-medium truncate">
@@ -108,13 +116,13 @@ export default async function Page({ params }: { params: { name: string } }) {
         </section>
       )}
 
-      {c.summary && <section className="card p-5"><h2 className="font-semibold mb-2">About</h2><p className="text-[15px] leading-relaxed">{c.summary}</p></section>}
-      {c.business_model && <section className="card p-5"><h2 className="font-semibold mb-2">Business model</h2><p className="text-[15px] leading-relaxed">{c.business_model}</p></section>}
+      {c.summary && <section className="card p-5"><h2 className="section-title mb-2">About</h2><p className="text-[15px] leading-relaxed">{c.summary}</p></section>}
+      {c.business_model && <section className="card p-5"><h2 className="section-title mb-2">Business model</h2><p className="text-[15px] leading-relaxed">{c.business_model}</p></section>}
 
       <div className="grid md:grid-cols-2 gap-5">
         {founders.length > 0 && (
           <section className="card p-5">
-            <h2 className="font-semibold mb-3">People</h2>
+            <h2 className="section-title mb-3">People</h2>
             <ul className="space-y-1.5 text-sm">
               {founders.map((f, i) => (
                 <li key={i}>
@@ -127,19 +135,19 @@ export default async function Page({ params }: { params: { name: string } }) {
         )}
         {(c.key_metrics ?? []).length > 0 && (
           <section className="card p-5">
-            <h2 className="font-semibold mb-3">Key metrics</h2>
-            <ul className="list-disc pl-5 space-y-1 text-sm">{(c.key_metrics ?? []).map((m, i) => <li key={i}>{m}</li>)}</ul>
+            <h2 className="section-title mb-3">Key metrics</h2>
+            <ul className="list-disc pl-5 space-y-1 text-sm marker:text-accent">{(c.key_metrics ?? []).map((m, i) => <li key={i}>{m}</li>)}</ul>
           </section>
         )}
         {(c.risks ?? []).length > 0 && (
           <section className="card p-5">
-            <h2 className="font-semibold mb-3">Risks</h2>
-            <ul className="list-disc pl-5 space-y-1 text-sm">{(c.risks ?? []).map((m, i) => <li key={i}>{m}</li>)}</ul>
+            <h2 className="section-title mb-3">Risks</h2>
+            <ul className="list-disc pl-5 space-y-1 text-sm marker:text-rose-400">{(c.risks ?? []).map((m, i) => <li key={i}>{m}</li>)}</ul>
           </section>
         )}
         {(c.existing_investors ?? []).length > 0 && (
           <section className="card p-5">
-            <h2 className="font-semibold mb-3">Existing investors</h2>
+            <h2 className="section-title mb-3">Existing investors</h2>
             <div className="flex flex-wrap gap-2">{(c.existing_investors ?? []).map((m, i) => <Pill key={i}>{m}</Pill>)}</div>
             {c.referred_by && <p className="text-dim text-sm mt-3">Referred by: {c.referred_by}</p>}
           </section>
@@ -147,7 +155,7 @@ export default async function Page({ params }: { params: { name: string } }) {
       </div>
 
       <section className="card p-5">
-        <h2 className="font-semibold mb-3">Call notes ({emails.length})</h2>
+        <h2 className="section-title mb-3">Call notes ({emails.length})</h2>
         <div className="space-y-3">
           {emails.map((e, i) => (
             <div key={i} className="border-b border-line pb-3 last:border-0">

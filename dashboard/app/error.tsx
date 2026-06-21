@@ -8,7 +8,7 @@ export default function Error({ reset }: { error: Error & { digest?: string }; r
         The brain’s database didn’t respond. This is usually transient — try again.
       </p>
       <button onClick={() => reset()}
-        className="px-4 py-2 rounded-lg bg-mint text-white font-medium hover:bg-mintdark">
+        className="px-4 py-2 rounded-lg bg-accent text-white font-medium transition-colors hover:bg-accentd">
         Retry
       </button>
     </div>
