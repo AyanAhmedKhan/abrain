@@ -1,0 +1,15 @@
+# gbrain · merge any new name-variant person dups every 15 minutes (catches
+# variants created as the profile backfill enriches people).
+# Install: copy both gbrain-dedupe.{service,timer} to /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now gbrain-dedupe.timer
+# Check:   systemctl list-timers gbrain-dedupe.timer
+[Unit]
+Description=Run gbrain person de-dup every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

@@ -66,6 +66,24 @@ export const getPersonCompanies = (id: string) =>
       where e.src = $1 and e.rel = 'works_at' order by d.canonical`, [id]
   ).then((r) => r.map((x) => x.company)), [], "getPersonCompanies");
 
+// colleagues: people who share a works_at company with this person (graph join).
+export const getColleagues = (id: string) =>
+  safe(q<OrgPerson & { company: string }>(
+    `select distinct e.canonical as person, e.id as entity_id,
+            coalesce(p.current_title, e.attrs->>'role') as role,
+            e.attrs->>'headline' as headline,
+            coalesce(p.linkedin_url, e.attrs->>'linkedin') as linkedin,
+            p.photo_url, (p.person_id is not null) as has_profile,
+            d.canonical as company
+       from gb_edge me
+       join gb_edge other on other.dst = me.dst and other.rel = 'works_at'
+       join gb_entity d on d.id = me.dst and d.type = 'company'
+       join gb_entity e on e.id = other.src and e.type = 'person'
+       left join gb_person_profile p on p.person_id = e.id
+      where me.src = $1 and me.rel = 'works_at' and other.src <> $1
+      order by has_profile desc, person limit 60`, [id]
+  ), [], "getColleagues");
+
 // people who work at this org (LinkedIn works_at edges). Cluster-aware: also
 // counts edges pointing at duplicate company nodes (shared website / mutual
 // aliases) so all employees show even before any merge.

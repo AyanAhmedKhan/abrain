@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getPerson, getPersonCompanies } from "@/lib/data";
+import { getPerson, getPersonCompanies, getColleagues } from "@/lib/data";
 import { Avatar } from "@/components/Img";
 
 export const dynamic = "force-dynamic";
@@ -32,7 +32,9 @@ export default async function Page({ params }: { params: { id: string } }) {
       </div>
     );
   }
-  const companies = await getPersonCompanies(params.id);
+  const [companies, colleagues] = await Promise.all([
+    getPersonCompanies(params.id), getColleagues(params.id),
+  ]);
   const loc = [p.location_city, p.location_country].filter(Boolean).join(", ");
   const exp = p.experience ?? [];
   const edu = p.education ?? [];
@@ -153,6 +155,29 @@ export default async function Page({ params }: { params: { id: string } }) {
               <li key={i}><span className="font-medium">{pr.title}</span>{pr.description ? <span className="text-dim"> — {pr.description}</span> : null}</li>
             ))}
           </ul>
+        </Section>
+      )}
+
+      {colleagues.length > 0 && (
+        <Section title={`Colleagues (${colleagues.length})`}>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {colleagues.map((co) => (
+              <div key={co.entity_id} className="flex items-center gap-3 border border-line rounded-lg p-2.5">
+                <Avatar src={co.photo_url} name={co.person} size={36} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">
+                    {co.has_profile
+                      ? <Link href={`/people/${co.entity_id}`} className="text-accent hover:underline">{co.person}</Link>
+                      : co.person}
+                  </div>
+                  <div className="text-dim text-xs truncate" title={co.headline ?? co.role ?? ""}>
+                    {co.role ?? co.headline ?? ""}{co.company ? ` · ${co.company}` : ""}
+                  </div>
+                </div>
+                {co.linkedin && <a href={co.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline text-xs shrink-0">in ↗</a>}
+              </div>
+            ))}
+          </div>
         </Section>
       )}
 

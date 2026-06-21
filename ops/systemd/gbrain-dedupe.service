@@ -1,0 +1,15 @@
+# gbrain · collapse duplicate person nodes by LinkedIn slug (oneshot, driven by
+# gbrain-dedupe.timer). Deterministic, idempotent, no API calls — safe to re-run.
+[Unit]
+Description=gbrain person de-dup (merge name-variant nodes by LinkedIn slug)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.dedupe_persons --apply
+StandardOutput=journal
+StandardError=journal

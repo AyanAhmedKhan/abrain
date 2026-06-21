@@ -24,6 +24,8 @@ from email.utils import getaddresses
 
 from workers.lib.db import connect
 from workers.normalize import clean_body
+from workers.apify_linkedin import _norm_co
+from workers.enrich import _is_person_name   # shared person-name quality gate
 from workers.lib.taxonomy import (canon_sector, canon_stage, entity_type,
                                   TYPE_CATEGORY, is_investor, is_dexter_email,
                                   name_from_email, DEXTER_TEAM, make_aliases)
@@ -174,6 +176,15 @@ def build_model(conn):
     ).fetchall():
         obs[r["canonical"].lower()][r["metric"]] = r  # most-recent as_of wins
 
+    # canonicalize extraction company names → merged entity canonical (via aliases),
+    # so duplicates collapse to ONE note and wikilinks resolve to the real node.
+    canon_of = {}
+    for r in conn.execute("select canonical, attrs->'aliases' as aliases from gb_entity where type='company'").fetchall():
+        canon_of[r["canonical"].lower()] = r["canonical"]
+        for a in (r["aliases"] or []):
+            if isinstance(a, str) and a.strip():
+                canon_of.setdefault(a.lower(), r["canonical"])
+
     companies, emails, people = {}, [], {}
 
     for r in rows:
@@ -181,6 +192,7 @@ def build_model(conn):
         name = (ex.get("company_name") or "").strip()
         if not name:
             continue
+        name = canon_of.get(name.lower(), name)   # collapse aliases → canonical note
         date = r["occurred_at"].date().isoformat() if r["occurred_at"] else ""
         c = companies.setdefault(name, {
             "name": name, "sector": None, "sub_sector": None, "stage": None,
@@ -193,7 +205,7 @@ def build_model(conn):
             "dexter": set(),
         })
         for nm, email in parse_contacts(r["actors"] or {}):
-            if nm and (is_dexter_email(email) or nm in DEXTER_TEAM):
+            if nm and _is_person_name(nm) and (is_dexter_email(email) or nm in DEXTER_TEAM):
                 c["dexter"].add(nm)
                 people.setdefault(nm, {"role": None, "company": "Dexter Capital",
                                        "linkedin": None, "last": date, "dexter": True})
@@ -222,7 +234,7 @@ def build_model(conn):
         c["ebitda"] = latest(c["ebitda"], ex.get("ebitda_inr_cr"))
         for f in ex.get("founders") or []:
             nm = (f.get("name") or "").strip()
-            if nm:
+            if nm and _is_person_name(nm):
                 c["founders"][nm] = f.get("role") or c["founders"].get(nm)
                 p = people.get(nm)
                 if p is None:
@@ -315,6 +327,21 @@ def build_model(conn):
         c["hq"] = c.get("hq") or r["hq"]
         c["website"] = c.get("website") or r["website"]
 
+    # interlink: people linked to each company via a works_at edge (LinkedIn).
+    # Feeds the company note's Team section + people frontmatter (backlinks/graph).
+    for r in conn.execute(
+        """select s.canonical as person, d.canonical as company
+             from gb_edge ed
+             join gb_entity s on s.id = ed.src and s.type='person'
+             join gb_entity d on d.id = ed.dst and d.type='company'
+            where ed.rel = 'works_at'"""
+    ).fetchall():
+        c = companies.get(r["company"])
+        if c is not None:
+            c.setdefault("team", [])
+            if r["person"] not in c["team"]:
+                c["team"].append(r["person"])
+
     # reverse-aggregation: who referred which deals → investor: [companies]
     referred = defaultdict(list)
     for c in companies.values():
@@ -347,7 +374,9 @@ def render_company(c, obs, referred):
     type_links = [f"[[Categories/{safe_name(type_cat)}]]"] if type_cat else cats
     stage = canon_stage(c["stage"])
     aliases = list(dict.fromkeys((c["aliases"] or []) + make_aliases(name)))
-    people_links = [wl(n) for n in c["founders"]] + [wl(n) for n in sorted(c["dexter"])]
+    team = [n for n in c.get("team", []) if n not in c["founders"] and n not in c["dexter"]]
+    people_links = list(dict.fromkeys(
+        [wl(n) for n in c["founders"]] + [wl(n) for n in sorted(c["dexter"])] + [wl(n) for n in team]))
     email_links = [wl(e, "Email") for e in c["emails"]]
     has_deal = c["ask"] is not None or bool(c["round_type"])
 
@@ -406,6 +435,9 @@ def render_company(c, obs, referred):
     if not c["founders"] and not c["dexter"]:
         body.append("| | | | | |")
     body.append("")
+    # Team (LinkedIn) — people linked to this org via a works_at edge
+    if team:
+        body += ["## Team (LinkedIn)", ""] + [f"- {wl(n)}" for n in team] + [""]
     # About / Business model
     body += ["## About", "", c["summary"] or "", "",
              "## Business Model", "", c["business_model"] or "", ""]
@@ -481,8 +513,12 @@ def render_company(c, obs, referred):
     return "\n".join(fm) + "\n" + "\n".join(body)
 
 
-def _exp_line(e):
-    head = " — ".join(x for x in (e.get("position"), e.get("companyName")) if x) or "(role)"
+def _exp_line(e, comp_index=None):
+    co = e.get("companyName") or ""
+    if comp_index and co:
+        canon = comp_index.get(_norm_co(co))
+        co = f"[[References/{safe_name(canon)}]]" if canon else co
+    head = " — ".join(x for x in (e.get("position"), co) if x) or "(role)"
     when = " – ".join(x for x in (e.get("start"), e.get("end")) if x)
     meta = " · ".join(x for x in (when, e.get("duration"), e.get("employmentType"),
                                   e.get("workplaceType"), e.get("location")) if x)
@@ -519,7 +555,7 @@ def _honor_line(h):
     return line
 
 
-def render_person(name, p):
+def render_person(name, p, comp_index=None):
     prof = p.get("profile") or {}
     fm = ["---", 'categories:', '  - "[[People]]"',
           fm_scalar("profession", p.get("role")),
@@ -568,7 +604,7 @@ def render_person(name, p):
         if meta:
             body += meta + [""]
     if prof.get("experience"):
-        body += ["## Experience", ""] + [_exp_line(e) for e in prof["experience"]] + [""]
+        body += ["## Experience", ""] + [_exp_line(e, comp_index) for e in prof["experience"]] + [""]
     if prof.get("education"):
         body += ["## Education", ""] + [_edu_line(e) for e in prof["education"]] + [""]
     if prof.get("skills"):
@@ -756,6 +792,9 @@ def build_vault(dest, conn):
     scaffold(dest)
     write_people_base(dest)   # enrich the People base with LinkedIn/profile columns
     companies, emails, people, obs, referred = build_model(conn)
+    # normalized company-name → canonical note name, for wikilinking experience
+    # companies in person notes to the right (deduped) company note.
+    comp_index = {_norm_co(n): n for n in companies}
 
     sectors = set()
     for c in companies.values():
@@ -779,7 +818,7 @@ def build_vault(dest, conn):
             fn = safe_name(n) + ".md"
             if fn.lower() in written:    # name clashes with a company / another person
                 continue
-            _write(os.path.join(dest, "References", fn), render_person(n, p))
+            _write(os.path.join(dest, "References", fn), render_person(n, p, comp_index))
             written.add(fn.lower())
         except Exception as e:
             errs += 1; print(f"[vault] skip person {n!r}: {e!r}", flush=True)
