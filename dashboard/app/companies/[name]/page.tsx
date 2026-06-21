@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { getCompany, getCompanyEmails, getCompanyProfile, inr } from "@/lib/data";
+import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, inr } from "@/lib/data";
 import { Badge, Pill } from "@/components/ui";
-import { Logo } from "@/components/Img";
+import { Logo, Avatar } from "@/components/Img";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +30,9 @@ export default async function Page({ params }: { params: { name: string } }) {
       </div>
     );
   }
-  const [emails, lp] = await Promise.all([getCompanyEmails(name), getCompanyProfile(name)]);
+  const [emails, lp, orgPeople] = await Promise.all([
+    getCompanyEmails(name), getCompanyProfile(name), getCompanyPeople(name),
+  ]);
   const founders = c.founders ?? [];
 
   return (
@@ -83,6 +85,28 @@ export default async function Page({ params }: { params: { name: string } }) {
         <Field label="Website">{c.website ? <a href={c.website} className="text-accent hover:underline" target="_blank" rel="noreferrer">link</a> : "—"}</Field>
         <Field label="Last interaction">{c.last_interaction ? String(c.last_interaction).slice(0, 10) : "—"}</Field>
       </div>
+
+      {orgPeople.length > 0 && (
+        <section className="card p-5">
+          <h2 className="font-semibold mb-3">People at this company <span className="text-dim font-normal">({orgPeople.length})</span></h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {orgPeople.map((op) => (
+              <div key={op.entity_id} className="flex items-center gap-3 border border-line rounded-lg p-2.5">
+                <Avatar src={op.photo_url} name={op.person} size={36} />
+                <div className="min-w-0 flex-1">
+                  <div className="font-medium truncate">
+                    {op.has_profile
+                      ? <Link href={`/people/${op.entity_id}`} className="text-accent hover:underline">{op.person}</Link>
+                      : op.person}
+                  </div>
+                  <div className="text-dim text-xs truncate" title={op.headline ?? op.role ?? ""}>{op.headline ?? op.role ?? ""}</div>
+                </div>
+                {op.linkedin && <a href={op.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline text-xs shrink-0">in ↗</a>}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {c.summary && <section className="card p-5"><h2 className="font-semibold mb-2">About</h2><p className="text-[15px] leading-relaxed">{c.summary}</p></section>}
       {c.business_model && <section className="card p-5"><h2 className="font-semibold mb-2">Business model</h2><p className="text-[15px] leading-relaxed">{c.business_model}</p></section>}

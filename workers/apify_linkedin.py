@@ -50,6 +50,19 @@ def _norm_co(s: str | None) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def norm_li_url(u: str | None) -> str | None:
+    """Canonicalise a LinkedIn URL for the Apify actor: drop query/fragment and
+    trailing slash, and normalise the country subdomain (in./uk./jp.…) to www.
+    harvestapi reliably resolves www URLs but returns empty for country-prefixed
+    or trailing-slash variants — this is what made ~60% of scrapes 'no-name'."""
+    if not u:
+        return u
+    u = u.strip().split("?")[0].split("#")[0].rstrip("/")
+    u = re.sub(r"^https?://[a-z]{2,3}\.linkedin\.com", "https://www.linkedin.com", u, flags=re.I)
+    u = re.sub(r"^https?://linkedin\.com", "https://www.linkedin.com", u, flags=re.I)
+    return u
+
+
 def _match_company(conn, cn: str | None):
     """Map a LinkedIn company name to an existing company entity. Returns entity
     id or None (NEVER creates a node). Tolerant of: legal/industry suffixes
@@ -330,6 +343,23 @@ def _maybe_upgrade_canonical(conn, person_id, name: str) -> None:
 
 # ── Apify API ────────────────────────────────────────────────
 
+class ApifyError(RuntimeError):
+    """Actor-level failure (plan/credit limit, auth, rate limit). RETRYABLE — the
+    caller must NOT treat it as an empty profile (no 'none' stamp), so nothing is
+    poisoned and everything re-scrapes once the plan is upgraded."""
+
+
+def _check_apify_items(items: list[dict]) -> list[dict]:
+    """harvestapi returns [{"error": "..."}] for plan/credit/rate limits instead
+    of a profile. Detect that and raise (retryable) rather than mis-reading it as
+    a no-name profile."""
+    if len(items) == 1 and isinstance(items[0], dict):
+        it = items[0]
+        if it.get("error") and not (it.get("firstName") or it.get("lastName") or it.get("name")):
+            raise ApifyError(str(it["error"])[:200])
+    return items
+
+
 def apify_fetch(urls: list[str]) -> list[dict]:
     token = os.environ.get("APIFY_TOKEN", "").strip()
     actor = os.environ.get("APIFY_ACTOR_ID", "").strip()
@@ -345,9 +375,9 @@ def apify_fetch(urls: list[str]) -> list[dict]:
         f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
         params={"token": token}, json=payload, timeout=300)
     if r.status_code not in (200, 201):
-        raise RuntimeError(f"apify {r.status_code}: {r.text[:200]}")
+        raise ApifyError(f"apify {r.status_code}: {r.text[:200]}")
     data = r.json()
-    return data if isinstance(data, list) else [data]
+    return _check_apify_items(data if isinstance(data, list) else [data])
 
 
 # ── worker (queue + backfill) ────────────────────────────────
@@ -372,7 +402,7 @@ def process(conn, person_id, url=None) -> str:
     a = e["attrs"] or {}
     if a.get("profile_scraped"):
         return "noop"
-    url = url or a.get("linkedin")
+    url = norm_li_url(url or a.get("linkedin"))
     if not url:
         return "no-url"
     # DEDUP by LinkedIn identity: the same profile may already be scraped under a
@@ -405,37 +435,44 @@ def run(once: bool = False) -> None:
                 return
             time.sleep(NO_KEY_SLEEP)
             continue
-        msgs = queues.read(conn, queues.Q_PROFILE, vt=VT_SECONDS, qty=3)
-        if msgs:
-            for m in msgs:
-                pid = m["message"].get("person_id")
-                try:
-                    print(f"[profile] {process(conn, pid, m['message'].get('url'))}", flush=True)
-                    queues.archive(conn, queues.Q_PROFILE, m["msg_id"])
-                except Exception as exc:  # noqa: BLE001
-                    if m["read_ct"] >= MAX_READS:
-                        queues.dead_letter(conn, "profile", pid, m["message"], repr(exc), m["read_ct"])
+        try:
+            msgs = queues.read(conn, queues.Q_PROFILE, vt=VT_SECONDS, qty=3)
+            if msgs:
+                for m in msgs:
+                    pid = m["message"].get("person_id")
+                    try:
+                        print(f"[profile] {process(conn, pid, m['message'].get('url'))}", flush=True)
                         queues.archive(conn, queues.Q_PROFILE, m["msg_id"])
-                        print(f"[profile] {pid} → DLQ ({exc})", flush=True)
-                    else:
-                        queues.backoff(m["read_ct"])
-                        print(f"[profile] {pid} retry ({exc})", flush=True)
-            continue
-        # backfill: people with a LinkedIn URL but no profile yet
-        ids = [r["id"] for r in conn.execute(
-            "select id from gb_entity where type='person' "
-            "and coalesce(attrs->>'linkedin','')<>'' and attrs->>'profile_scraped' is null "
-            "order by canonical limit %s", (MAX_PER_RUN,)).fetchall()]
-        for pid in ids:
-            try:
+                    except ApifyError:
+                        raise  # actor/plan limit → pause; leave msg for later retry
+                    except Exception as exc:  # noqa: BLE001
+                        if m["read_ct"] >= MAX_READS:
+                            queues.dead_letter(conn, "profile", pid, m["message"], repr(exc), m["read_ct"])
+                            queues.archive(conn, queues.Q_PROFILE, m["msg_id"])
+                            print(f"[profile] {pid} → DLQ ({exc})", flush=True)
+                        else:
+                            queues.backoff(m["read_ct"])
+                            print(f"[profile] {pid} retry ({exc})", flush=True)
+                continue
+            # backfill: people with a LinkedIn URL but no profile yet
+            ids = [r["id"] for r in conn.execute(
+                "select id from gb_entity where type='person' "
+                "and coalesce(attrs->>'linkedin','')<>'' and attrs->>'profile_scraped' is null "
+                "order by canonical limit %s", (MAX_PER_RUN,)).fetchall()]
+            for pid in ids:
                 print(f"[profile] {process(conn, pid)}", flush=True)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[profile] backfill {pid} error: {exc!r}", flush=True)
-                break
-        if not ids:
+            if not ids:
+                if once:
+                    return
+                time.sleep(IDLE_SLEEP)
+        except ApifyError as exc:
+            # plan/credit/rate limit — pause the whole worker (don't churn the
+            # backlog stamping errors). Resumes automatically; nothing poisoned.
+            print(f"[profile] PAUSED — Apify actor error: {exc} "
+                  f"(upgrade the harvestapi plan to continue scraping)", flush=True)
             if once:
                 return
-            time.sleep(IDLE_SLEEP)
+            time.sleep(NO_KEY_SLEEP)
 
 
 def import_path(conn, path) -> int:

@@ -70,6 +70,11 @@ export type PersonFull = {
   scraped_at: string | null;
 };
 
+export type OrgPerson = {
+  person: string; entity_id: string; role: string | null; headline: string | null;
+  linkedin: string | null; photo_url: string | null; has_profile: boolean;
+};
+
 export type CompanyProfile = {
   company: string; entity_id: string; linkedin_url: string | null; public_id: string | null;
   tagline: string | null; description: string | null; industry: string | null;

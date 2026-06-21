@@ -1,5 +1,5 @@
 import { q } from "./db";
-import type { Company, Stats, EmailRow, Person, PersonFull, CompanyProfile } from "./types";
+import type { Company, Stats, EmailRow, Person, PersonFull, CompanyProfile, OrgPerson } from "./types";
 
 export * from "./types"; // re-export types + inr for server pages
 
@@ -65,3 +65,32 @@ export const getPersonCompanies = (id: string) =>
        from gb_edge e join gb_entity d on d.id = e.dst
       where e.src = $1 and e.rel = 'works_at' order by d.canonical`, [id]
   ).then((r) => r.map((x) => x.company)), [], "getPersonCompanies");
+
+// people who work at this org (LinkedIn works_at edges). Cluster-aware: also
+// counts edges pointing at duplicate company nodes (shared website / mutual
+// aliases) so all employees show even before any merge.
+export const getCompanyPeople = (name: string) =>
+  safe(q<OrgPerson>(
+    `with target as (
+       select id, attrs from gb_entity where type='company' and canonical = $1 limit 1
+     ), cluster as (
+       select e.id from gb_entity e, target t
+        where e.type='company' and (
+          e.id = t.id
+          or e.canonical in (select jsonb_array_elements_text(coalesce(t.attrs->'aliases','[]'::jsonb)))
+          or $1 in (select jsonb_array_elements_text(coalesce(e.attrs->'aliases','[]'::jsonb)))
+          or (nullif(e.attrs->>'website','') is not null and e.attrs->>'website' = t.attrs->>'website')
+        )
+     )
+     select distinct e.canonical as person, e.id as entity_id,
+            coalesce(p.current_title, e.attrs->>'role') as role,
+            e.attrs->>'headline' as headline,
+            coalesce(p.linkedin_url, e.attrs->>'linkedin') as linkedin,
+            p.photo_url, (p.person_id is not null) as has_profile
+       from gb_edge ed
+       join cluster cl on cl.id = ed.dst
+       join gb_entity e on e.id = ed.src and e.type='person'
+       left join gb_person_profile p on p.person_id = e.id
+      where ed.rel = 'works_at'
+      order by has_profile desc, person`, [name]
+  ), [], "getCompanyPeople");

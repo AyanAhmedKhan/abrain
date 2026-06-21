@@ -37,7 +37,7 @@ import httpx
 
 from workers.lib import queues
 from workers.lib.db import connect
-from workers.apify_linkedin import _match_company  # suffix/alias/hub-tolerant matcher
+from workers.apify_linkedin import _match_company, _check_apify_items, ApifyError  # shared matcher + actor-error guard
 
 MAX_PER_RUN = int(os.environ.get("APIFY_MAX_PER_RUN", "50"))
 IDLE_SLEEP = 5.0
@@ -169,9 +169,9 @@ def apify_fetch_company(urls: list[str]) -> list[dict]:
         f"https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items",
         params={"token": token}, json=payload, timeout=300)
     if r.status_code not in (200, 201):
-        raise RuntimeError(f"apify {r.status_code}: {r.text[:200]}")
+        raise ApifyError(f"apify {r.status_code}: {r.text[:200]}")
     data = r.json()
-    return data if isinstance(data, list) else [data]
+    return _check_apify_items(data if isinstance(data, list) else [data])
 
 
 # ── worker (queue + backfill) ────────────────────────────────
@@ -209,37 +209,42 @@ def run(once: bool = False) -> None:
                 return
             time.sleep(NO_KEY_SLEEP)
             continue
-        msgs = queues.read(conn, queues.Q_COMPANY, vt=VT_SECONDS, qty=3)
-        if msgs:
-            for m in msgs:
-                cid = m["message"].get("company_id")
-                try:
-                    print(f"[company] {process(conn, cid, m['message'].get('url'))}", flush=True)
-                    queues.archive(conn, queues.Q_COMPANY, m["msg_id"])
-                except Exception as exc:  # noqa: BLE001
-                    if m["read_ct"] >= MAX_READS:
-                        queues.dead_letter(conn, "company", cid, m["message"], repr(exc), m["read_ct"])
+        try:
+            msgs = queues.read(conn, queues.Q_COMPANY, vt=VT_SECONDS, qty=3)
+            if msgs:
+                for m in msgs:
+                    cid = m["message"].get("company_id")
+                    try:
+                        print(f"[company] {process(conn, cid, m['message'].get('url'))}", flush=True)
                         queues.archive(conn, queues.Q_COMPANY, m["msg_id"])
-                        print(f"[company] {cid} → DLQ ({exc})", flush=True)
-                    else:
-                        queues.backoff(m["read_ct"])
-                        print(f"[company] {cid} retry ({exc})", flush=True)
-            continue
-        # backfill: tracked companies with a LinkedIn URL but no profile yet
-        ids = [r["id"] for r in conn.execute(
-            "select id from gb_entity where type='company' "
-            "and coalesce(attrs->>'linkedin','')<>'' and attrs->>'company_scraped' is null "
-            "order by canonical limit %s", (MAX_PER_RUN,)).fetchall()]
-        for cid in ids:
-            try:
+                    except ApifyError:
+                        raise  # actor/plan limit → pause; leave msg for later retry
+                    except Exception as exc:  # noqa: BLE001
+                        if m["read_ct"] >= MAX_READS:
+                            queues.dead_letter(conn, "company", cid, m["message"], repr(exc), m["read_ct"])
+                            queues.archive(conn, queues.Q_COMPANY, m["msg_id"])
+                            print(f"[company] {cid} → DLQ ({exc})", flush=True)
+                        else:
+                            queues.backoff(m["read_ct"])
+                            print(f"[company] {cid} retry ({exc})", flush=True)
+                continue
+            # backfill: tracked companies with a LinkedIn URL but no profile yet
+            ids = [r["id"] for r in conn.execute(
+                "select id from gb_entity where type='company' "
+                "and coalesce(attrs->>'linkedin','')<>'' and attrs->>'company_scraped' is null "
+                "order by canonical limit %s", (MAX_PER_RUN,)).fetchall()]
+            for cid in ids:
                 print(f"[company] {process(conn, cid)}", flush=True)
-            except Exception as exc:  # noqa: BLE001
-                print(f"[company] backfill {cid} error: {exc!r}", flush=True)
-                break
-        if not ids:
+            if not ids:
+                if once:
+                    return
+                time.sleep(IDLE_SLEEP)
+        except ApifyError as exc:
+            print(f"[company] PAUSED — Apify actor error: {exc} "
+                  f"(upgrade the harvestapi plan to continue scraping)", flush=True)
             if once:
                 return
-            time.sleep(IDLE_SLEEP)
+            time.sleep(NO_KEY_SLEEP)
 
 
 def import_path(conn, path) -> int:
