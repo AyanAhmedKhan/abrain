@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getPeople } from "@/lib/data";
+import { Avatar } from "@/components/Img";
 
 export const dynamic = "force-dynamic";
 
@@ -28,10 +29,7 @@ export default async function Page() {
               <tr key={p.entity_id} className="border-b border-line hover:bg-[#FAF7F1]">
                 <td className="px-3 py-2 font-medium">
                   <div className="flex items-center gap-2">
-                    {p.photo_url
-                      // eslint-disable-next-line @next/next/no-img-element
-                      ? <img src={p.photo_url} alt="" className="w-7 h-7 rounded-full object-cover bg-cream" />
-                      : <span className="w-7 h-7 rounded-full bg-cream inline-flex items-center justify-center text-dim text-xs">{p.person.slice(0, 1)}</span>}
+                    <Avatar src={p.photo_url} name={p.person} size={28} />
                     {p.has_profile
                       ? <Link className="text-accent hover:underline" href={`/people/${p.entity_id}`}>{p.person}</Link>
                       : <span>{p.person}</span>}

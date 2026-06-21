@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCompany, getCompanyEmails, getCompanyProfile, inr } from "@/lib/data";
 import { Badge, Pill } from "@/components/ui";
+import { Logo } from "@/components/Img";
 
 export const dynamic = "force-dynamic";
 
@@ -36,10 +37,7 @@ export default async function Page({ params }: { params: { name: string } }) {
     <div className="space-y-5">
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/" className="text-accent hover:underline text-sm">← Dashboard</Link>
-        {lp?.logo_url && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={lp.logo_url} alt="" className="w-9 h-9 rounded object-contain bg-cream" />
-        )}
+        {lp?.logo_url && <Logo src={lp.logo_url} name={c.company} size={36} />}
         <h1 className="text-2xl font-bold">{c.company}</h1>
         {c.has_deal && <span className="text-xs px-2 py-0.5 rounded bg-minttint text-mintdark font-semibold">DEAL</span>}
         {lp?.linkedin_url && <a href={lp.linkedin_url} target="_blank" rel="noreferrer" className="text-accent hover:underline text-sm">LinkedIn ↗</a>}

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getPerson, getPersonCompanies } from "@/lib/data";
+import { Avatar } from "@/components/Img";
 
 export const dynamic = "force-dynamic";
 
@@ -45,10 +46,7 @@ export default async function Page({ params }: { params: { id: string } }) {
       <Link href="/people" className="text-accent hover:underline text-sm">← People</Link>
 
       <div className="card p-5 flex items-start gap-4">
-        {p.photo_url
-          // eslint-disable-next-line @next/next/no-img-element
-          ? <img src={p.photo_url} alt="" className="w-20 h-20 rounded-full object-cover bg-cream shrink-0" />
-          : <span className="w-20 h-20 rounded-full bg-cream inline-flex items-center justify-center text-dim text-2xl shrink-0">{p.person.slice(0, 1)}</span>}
+        <Avatar src={p.photo_url} name={p.person} size={80} />
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">{p.person}</h1>
           {p.headline && <p className="text-dim mt-1">{p.headline}</p>}

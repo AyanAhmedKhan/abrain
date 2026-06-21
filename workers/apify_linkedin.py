@@ -100,7 +100,8 @@ MAX_READS = 3
 def _exp(e: dict) -> dict:
     return {k: e.get(k) for k in
             ("position", "companyName", "companyLinkedinUrl", "companyId",
-             "location", "employmentType", "workplaceType", "duration", "description")
+             "companyUniversalName", "companyLogo", "location", "employmentType",
+             "workplaceType", "duration", "description")
             } | {"start": (e.get("startDate") or {}).get("text"),
                  "end": (e.get("endDate") or {}).get("text"),
                  "skills": e.get("skills") or []}
@@ -180,27 +181,47 @@ def parse_profile(j: dict) -> dict:
 
 # ── store (DB + entity attrs + graph) ────────────────────────
 
-def store_profile(conn, j: dict) -> str:
+def store_profile(conn, j: dict, person_id=None) -> str:
     p = parse_profile(j)
     if not p["name"]:
+        # un-scrapeable response (private/invalid/empty) — stamp the known entity
+        # so it leaves the backfill set and is NEVER re-scraped (no credit leak).
+        if person_id:
+            conn.execute("update gb_entity set attrs = attrs || '{\"profile_scraped\":\"none\"}'::jsonb where id=%s",
+                         (person_id,))
         return "no-name"
-    # upsert the person entity (match existing by canonical name)
-    pid = conn.execute(
-        """insert into gb_entity (type, canonical, attrs, keys)
-           values ('person', %s, %s::jsonb, %s::jsonb)
-           on conflict (type, canonical) do update
-             set attrs = gb_entity.attrs || excluded.attrs
-           returning id""",
-        (p["name"],
-         json.dumps({k: v for k, v in {
-             "linkedin": p["linkedin_url"], "headline": p["headline"],
-             "company": p["current_company"], "role": p["current_title"],
-             "location": p["location_city"], "photo": p["photo_url"],
-             "public_id": p["public_id"], "linkedin_checked": "apify",
-             "profile_scraped": "apify",
-         }.items() if v is not None}),
-         json.dumps({"linkedin": p["public_id"]} if p["public_id"] else {})),
-    ).fetchone()["id"]
+    # upgrade a stub canonical (an extracted first name like "Navneet") to the
+    # full LinkedIn name when it's a safe superset with no collision — keeps one
+    # clean node per person instead of a stub + a full-name duplicate.
+    if person_id:
+        _maybe_upgrade_canonical(conn, person_id, p["name"])
+    # quick-fields mirrored onto the person entity (drive dashboard + vault)
+    quick = {k: v for k, v in {
+        "linkedin": p["linkedin_url"], "headline": p["headline"],
+        "company": p["current_company"], "role": p["current_title"],
+        "location": p["location_city"], "photo": p["photo_url"],
+        "public_id": p["public_id"], "linkedin_checked": "apify",
+        "profile_scraped": "apify",
+    }.items() if v is not None}
+    keys = {"linkedin": p["public_id"]} if p["public_id"] else {}
+    if person_id:
+        # worker path: the entity is KNOWN (queued/backfilled). Bind the profile to
+        # it and stamp profile_scraped on IT — never spawn a second node from the
+        # scraped name, and guarantee it leaves the backfill set (no re-scrape).
+        conn.execute(
+            "update gb_entity set attrs = attrs || %s::jsonb, keys = keys || %s::jsonb where id=%s",
+            (json.dumps(quick), json.dumps(keys), person_id))
+        pid = person_id
+    else:
+        # import/scrape CLI path: no known entity → resolve/create by canonical name.
+        pid = conn.execute(
+            """insert into gb_entity (type, canonical, attrs, keys)
+               values ('person', %s, %s::jsonb, %s::jsonb)
+               on conflict (type, canonical) do update
+                 set attrs = gb_entity.attrs || excluded.attrs
+               returning id""",
+            (p["name"], json.dumps(quick), json.dumps(keys)),
+        ).fetchone()["id"]
 
     conn.execute(
         """insert into gb_person_profile
@@ -243,35 +264,68 @@ def store_profile(conn, j: dict) -> str:
                 "insert into gb_edge (src, rel, dst) values (%s,'works_at',%s) on conflict do nothing",
                 (pid, comp_id))
             edges += 1
-            _attach_company_url(conn, comp_id, _company_url(e))
+            _attach_company_url(conn, comp_id, _company_url(e), e.get("companyLogo"))
     return f"{p['name']} ({len(p['experience'])} jobs, {len(p['skills'])} skills, {edges} edges)"
 
 
 def _company_url(e: dict) -> str | None:
     """LinkedIn company URL from an experience entry (free byproduct of a person
-    scrape): prefer the explicit URL, else construct from the numeric company id."""
+    scrape): prefer the explicit URL, then the clean universalName slug, else the
+    numeric company id."""
     u = (e.get("companyLinkedinUrl") or "").strip()
     if u:
         return u.split("?")[0].rstrip("/")
+    un = (e.get("companyUniversalName") or "").strip()
+    if un:
+        return f"https://www.linkedin.com/company/{un}"
     cid = e.get("companyId")
     return f"https://www.linkedin.com/company/{cid}" if cid else None
 
 
-def _attach_company_url(conn, comp_id, url: str | None) -> None:
-    """Stamp a company's LinkedIn URL onto its entity (only if not already set)
-    and enqueue a one-time full scrape. Zero cost — derived from person data."""
+def _attach_company_url(conn, comp_id, url: str | None, logo: str | None = None) -> None:
+    """Stamp a company's LinkedIn URL (and logo, if absent) onto its entity and
+    enqueue a one-time full scrape on first discovery. Zero cost — all derived
+    from person data we already paid to scrape."""
     if not comp_id or not url:
         return
     a = (conn.execute("select attrs from gb_entity where id=%s", (comp_id,)).fetchone() or {}).get("attrs") or {}
-    if a.get("linkedin"):
-        return  # already have a URL (and likely already enqueued) — no-op
-    conn.execute("update gb_entity set attrs = attrs || jsonb_build_object('linkedin', %s::text) where id=%s",
-                 (url, comp_id))
+    patch = {}
+    if not a.get("logo") and logo:
+        patch["logo"] = logo            # free company logo for the dashboard/vault
+    if a.get("linkedin"):               # URL already known → just backfill the logo
+        if patch:
+            conn.execute("update gb_entity set attrs = attrs || %s::jsonb where id=%s",
+                         (json.dumps(patch), comp_id))
+        return
+    patch["linkedin"] = url
+    conn.execute("update gb_entity set attrs = attrs || %s::jsonb where id=%s",
+                 (json.dumps(patch), comp_id))
     if not a.get("company_scraped"):
         try:
             queues.send(conn, queues.Q_COMPANY, {"company_id": str(comp_id), "url": url})
         except Exception:  # noqa: BLE001
             pass
+
+
+def _maybe_upgrade_canonical(conn, person_id, name: str) -> None:
+    """Rename a stub person entity to the full LinkedIn name, but ONLY when the
+    current canonical is a subset of it (e.g. "Navneet" → "Navneet Agarwal") and
+    no other entity already owns that name — never merges two distinct people."""
+    cur = conn.execute("select canonical from gb_entity where id=%s", (person_id,)).fetchone()
+    if not cur:
+        return
+    old = (cur["canonical"] or "").strip()
+    if not old or old.lower() == name.lower() or old.lower() not in name.lower():
+        return
+    dup = conn.execute(
+        "select 1 from gb_entity where type='person' and lower(canonical)=lower(%s) and id<>%s",
+        (name, person_id)).fetchone()
+    if dup:
+        return
+    try:
+        conn.execute("update gb_entity set canonical=%s where id=%s", (name, person_id))
+    except Exception:  # noqa: BLE001 — unique race; keep the existing name
+        pass
 
 
 # ── Apify API ────────────────────────────────────────────────
@@ -302,6 +356,14 @@ def _apify_ready() -> bool:
     return bool(os.environ.get("APIFY_TOKEN", "").strip() and os.environ.get("APIFY_ACTOR_ID", "").strip())
 
 
+def _li_slug(url: str | None) -> str | None:
+    """The /in/<slug> identity key from a LinkedIn URL (subdomain/case/query
+    independent) — the deterministic key that unifies first-name vs full-name
+    nodes for the same person."""
+    m = re.search(r"/in/([^/?#]+)", url or "")
+    return m.group(1).strip("/").lower() if m else None
+
+
 def process(conn, person_id, url=None) -> str:
     e = conn.execute("select id, canonical, attrs from gb_entity where id=%s and type='person'",
                      (person_id,)).fetchone()
@@ -313,11 +375,25 @@ def process(conn, person_id, url=None) -> str:
     url = url or a.get("linkedin")
     if not url:
         return "no-url"
+    # DEDUP by LinkedIn identity: the same profile may already be scraped under a
+    # name-variant node ("Jeetendra" vs "Jeetendra Kundlia"). Reuse the stored raw
+    # — spend NO Apify credit — and still bind it here so both variants enrich.
+    slug = _li_slug(url)
+    if slug:
+        # exact slug match (harvestapi's publicIdentifier IS the /in/ slug); a
+        # missing/empty public_id simply fails safe to a normal scrape, never to a
+        # wrong-person merge.
+        twin = conn.execute(
+            "select raw from gb_person_profile where lower(public_id)=%s and raw is not null limit 1",
+            (slug,)).fetchone()
+        if twin and twin["raw"]:
+            store_profile(conn, twin["raw"], person_id=person_id)
+            return f"dedup: reused /in/{slug} (no credit)"
     items = apify_fetch([url])
     if not items:
         conn.execute("update gb_entity set attrs = attrs || '{\"profile_scraped\":\"none\"}'::jsonb where id=%s", (person_id,))
         return "none"
-    return store_profile(conn, items[0])
+    return store_profile(conn, items[0], person_id=person_id)
 
 
 def run(once: bool = False) -> None:
