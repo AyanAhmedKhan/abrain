@@ -1,5 +1,5 @@
 import { q } from "./db";
-import type { Company, Stats, EmailRow, Person } from "./types";
+import type { Company, Stats, EmailRow, Person, PersonFull } from "./types";
 
 export * from "./types"; // re-export types + inr for server pages
 
@@ -40,4 +40,20 @@ export const getCompanyEmails = (name: string) =>
   ), [], "getCompanyEmails");
 
 export const getPeople = () =>
-  safe(q<Person>(`select person, role, company, linkedin, email from gb_person_card order by person`), [], "getPeople");
+  safe(q<Person>(
+    `select person, role, company, linkedin, email, headline, current_title,
+            current_company, location, photo_url, followers, public_id,
+            has_profile, entity_id
+       from gb_person_card
+      order by has_profile desc, followers desc nulls last, person`), [], "getPeople");
+
+export const getPerson = (id: string) =>
+  safe(q<PersonFull>(`select * from gb_person_full where entity_id = $1`, [id]).then((r) => r[0] ?? null), null, "getPerson");
+
+// companies this person is linked to in the graph (works_at edges → company notes)
+export const getPersonCompanies = (id: string) =>
+  safe(q<{ company: string }>(
+    `select d.canonical as company
+       from gb_edge e join gb_entity d on d.id = e.dst
+      where e.src = $1 and e.rel = 'works_at' order by d.canonical`, [id]
+  ).then((r) => r.map((x) => x.company)), [], "getPersonCompanies");

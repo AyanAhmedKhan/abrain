@@ -1,0 +1,20 @@
+# gbrain · enrichment worker (Scrappa) — persons→LinkedIn, decoupled from the
+# paid pipeline. Consumes gb_q_enrich + backfills when idle. No-ops without a key.
+[Unit]
+Description=gbrain enrichment worker (Scrappa persons→LinkedIn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.enrich worker
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,42 @@
+[{
+  "publicIdentifier": "ayan-ahmed-khan",
+  "linkedinUrl": "https://www.linkedin.com/in/ayan-ahmed-khan",
+  "firstName": "Ayan Ahmed", "lastName": "Khan",
+  "headline": "AI Intern @ Dexter Capital | Building AI Agents, Agentic Workflows, RAG | 4× Hackathon Winner",
+  "location": {"linkedinText": "Greater Gwalior Area", "countryCode": "IN",
+    "parsed": {"text": "Gwalior, India", "country": "India", "state": "Madhya Pradesh", "city": "Gwalior", "countryCode": "IN"}},
+  "connectionsCount": 1695, "followerCount": 1715,
+  "about": "Hi, I'm Ayan Ahmed Khan. I'm currently pursuing my B.Tech in ITIoT at MITS Gwalior. I love building scalable, production-ready applications across Python, C++, Django, FastAPI, React, and AI/ML.",
+  "photo": "https://media.licdn.com/dms/image/v2/ayan-photo.jpg",
+  "currentPosition": [{"position": "Applied AI Intern", "location": "Bengaluru", "employmentType": "Internship",
+    "workplaceType": "On-site", "companyName": "Dexter Capital Advisors", "companyId": "3032250",
+    "duration": "2 mos", "skills": ["Artificial Intelligence (AI)","AI Agents","Automation"],
+    "startDate": {"text": "May 2026"}, "endDate": {"text": "Present"}}],
+  "experience": [
+    {"position": "Applied AI Intern", "companyName": "Dexter Capital Advisors", "companyId": "3032250",
+     "location": "Bengaluru", "employmentType": "Internship", "duration": "2 mos",
+     "skills": ["Artificial Intelligence (AI)","AI Agents","Automation"],
+     "startDate": {"text": "May 2026"}, "endDate": {"text": "Present"}},
+    {"position": "Open Source Developer", "companyName": "Hacktoberfest", "duration": "1 mo",
+     "description": "Contributed to multiple open-source repositories; recognized as a Super Contributor.",
+     "startDate": {"text": "Oct 2025"}, "endDate": {"text": "Oct 2025"}},
+    {"position": "Software Developer", "companyName": "Podosphere", "employmentType": "Internship",
+     "workplaceType": "Remote", "duration": "3 mos", "startDate": {"text": "Oct 2024"}, "endDate": {"text": "Dec 2024"}}
+  ],
+  "education": [
+    {"schoolName": "Madhav Institute of Technology and Science, Gwalior", "degree": "Bachelor's degree",
+     "fieldOfStudy": "Information Technology Specialization in Internet of Things (ITIoT)", "period": "2023 - 2027", "insights": "Grade: 8.61"},
+    {"schoolName": "Atmiya Vidya Mandir", "degree": "10th", "period": "Feb 2020 - May 2021", "insights": "Grade: 91.05"},
+    {"schoolName": "Bright Convent H.R Secondary School", "degree": "12th", "period": "Mar 2021 - May 2023"}
+  ],
+  "certifications": [
+    {"title": "Deloitte Australia - Technology Job Simulation", "issuedBy": "Forage", "issuedAt": "Issued Jun 2025", "link": "https://forage.example/cert.pdf"},
+    {"title": "Mastering in HTML and CSS", "issuedBy": "Udemy", "issuedAt": "Issued Dec 2024", "link": "https://udemy.com/cert"}
+  ],
+  "honorsAndAwards": [
+    {"title": "Chancellor Award", "issuedBy": "MITS Gwalior", "issuedAt": "Mar 2026",
+     "description": "2 Chancellor Awards and 2 Meritocracy Awards on MITS Day 2026 with ₹22,500 prize."}
+  ],
+  "projects": [{"title": "Automated News Tracker", "description": "Python + Selenium scraper for Google News top stories."}],
+  "skills": [{"name":"Artificial Intelligence (AI)"},{"name":"AI Agents"},{"name":"Automation"},{"name":"Python (Programming Language)"},{"name":"C++"},{"name":"Web Scraping"},{"name":"Open-Source Software"}]
+}]

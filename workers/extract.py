@@ -88,12 +88,18 @@ def fan_out(conn, envelope_id: str, env: dict, note: dict) -> None:
         if note.get(k) is not None
     })
 
+    enrich_on = bool(os.environ.get("SCRAPPA_API_KEY", "").strip())
     for f in note.get("founders") or []:
         pid = upsert_entity(conn, "person", f.get("name") or "", {
             "role": f.get("role"), "company": note.get("company_name"),
             "linkedin": f.get("linkedin"),
         })
         edge(conn, pid, "works_at", company_id, envelope_id, env.get("occurred_at"))
+        # async LinkedIn enrichment (decoupled; the enrich worker dedups so a
+        # person is searched at most once ever). Only if Scrappa is configured
+        # and we don't already have a LinkedIn for them.
+        if enrich_on and pid and not f.get("linkedin"):
+            queues.send(conn, queues.Q_ENRICH, {"person_id": str(pid)})
 
     if note.get("round_type") or note.get("ask_inr_cr"):
         deal_id = upsert_entity(

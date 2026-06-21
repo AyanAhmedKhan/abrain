@@ -26,6 +26,8 @@ Q_EMBED = "gb_q_embed"
 Q_RESOLVE = "gb_q_resolve"
 Q_INDEX = "gb_q_index"
 Q_BACKFILL = "gb_q_backfill"
+Q_ENRICH = "gb_q_enrich"
+Q_PROFILE = "gb_q_profile"
 
 
 def send(conn: psycopg.Connection, queue: str, payload: dict[str, Any]) -> int:

@@ -256,6 +256,37 @@ def build_model(conn):
             "company": name,
         })
 
+    # attach rich LinkedIn profiles (Apify, deterministic) keyed by entity name.
+    # A profiled person who isn't a founder/Dexter contact still gets a note.
+    for r in conn.execute(
+        """select e.canonical, p.linkedin_url, p.public_id, p.headline, p.about,
+                  p.location_city, p.location_country, p.current_title, p.current_company,
+                  p.photo_url, p.followers, p.connections, p.skills, p.experience,
+                  p.education, p.certifications, p.honors, p.projects
+             from gb_person_profile p join gb_entity e on e.id = p.person_id
+            where e.type='person'"""
+    ).fetchall():
+        nm = (r["canonical"] or "").strip()
+        if not nm:
+            continue
+        person = people.get(nm)
+        if person is None:
+            person = people.setdefault(nm, {"role": None, "company": None,
+                                            "linkedin": None, "last": "", "dexter": False})
+        person["profile"] = {
+            "linkedin": r["linkedin_url"], "public_id": r["public_id"],
+            "headline": r["headline"], "about": r["about"],
+            "location": ", ".join(x for x in (r["location_city"], r["location_country"]) if x) or None,
+            "current_title": r["current_title"], "current_company": r["current_company"],
+            "photo": r["photo_url"], "followers": r["followers"], "connections": r["connections"],
+            "skills": r["skills"] or [], "experience": r["experience"] or [],
+            "education": r["education"] or [], "certifications": r["certifications"] or [],
+            "honors": r["honors"] or [], "projects": r["projects"] or [],
+        }
+        person["linkedin"] = person.get("linkedin") or r["linkedin_url"]
+        person["role"] = person.get("role") or r["current_title"]
+        person["company"] = person.get("company") or r["current_company"]
+
     # reverse-aggregation: who referred which deals → investor: [companies]
     referred = defaultdict(list)
     for c in companies.values():
@@ -398,21 +429,112 @@ def render_company(c, obs, referred):
     return "\n".join(fm) + "\n" + "\n".join(body)
 
 
+def _exp_line(e):
+    head = " — ".join(x for x in (e.get("position"), e.get("companyName")) if x) or "(role)"
+    when = " – ".join(x for x in (e.get("start"), e.get("end")) if x)
+    meta = " · ".join(x for x in (when, e.get("duration"), e.get("employmentType"),
+                                  e.get("workplaceType"), e.get("location")) if x)
+    line = f"- **{head}**"
+    if meta:
+        line += f"  \n  _{meta}_"
+    if e.get("description"):
+        line += f"  \n  {str(e['description']).strip()}"
+    return line
+
+
+def _edu_line(e):
+    head = e.get("schoolName") or "(school)"
+    detail = ", ".join(x for x in (e.get("degree"), e.get("fieldOfStudy")) if x)
+    tail = " · ".join(x for x in (detail, e.get("period"), e.get("insights")) if x)
+    return f"- **{head}**" + (f"  \n  _{tail}_" if tail else "")
+
+
+def _cert_line(c):
+    head = c.get("title") or "(certificate)"
+    by = " · ".join(x for x in (c.get("issuedBy"), c.get("issuedAt")) if x)
+    line = f"- {head}" + (f" — _{by}_" if by else "")
+    if c.get("link"):
+        line += f" ([link]({c['link']}))"
+    return line
+
+
+def _honor_line(h):
+    head = h.get("title") or "(award)"
+    by = " · ".join(x for x in (h.get("issuedBy"), h.get("issuedAt")) if x)
+    line = f"- **{head}**" + (f" — _{by}_" if by else "")
+    if h.get("description"):
+        line += f"  \n  {str(h['description']).strip()}"
+    return line
+
+
 def render_person(name, p):
+    prof = p.get("profile") or {}
     fm = ["---", 'categories:', '  - "[[People]]"',
           fm_scalar("profession", p.get("role")),
           fm_list("org", [wl(p["company"])] if p.get("company") else []),
-          fm_scalar("email", None), fm_scalar("phone", None),
-          fm_scalar("created", p.get("last")),
-          fm_scalar("last_interaction", p.get("last")),
-          fm_scalar("last_interaction_type", "Call"),
-          fm_scalar("last_context", f"Founder/contact at {p['company']}" if p.get("company") else None),
-          "---"]
+          fm_scalar("email", None), fm_scalar("phone", None)]
+    if prof:
+        fm += [
+            fm_scalar("headline", prof.get("headline")),
+            fm_scalar("linkedin", prof.get("linkedin")),
+            fm_scalar("linkedin_id", prof.get("public_id")),
+            fm_scalar("location", prof.get("location")),
+            fm_scalar("current_title", prof.get("current_title")),
+            fm_scalar("current_company", prof.get("current_company")),
+            fm_scalar("followers", prof.get("followers")),
+            fm_scalar("connections", prof.get("connections")),
+            fm_scalar("photo", prof.get("photo")),
+            fm_list("skills", prof.get("skills")),
+        ]
+    fm += [fm_scalar("created", p.get("last")),
+           fm_scalar("last_interaction", p.get("last")),
+           fm_scalar("last_interaction_type", "Call"),
+           fm_scalar("last_context", prof.get("headline")
+                     or (f"Founder/contact at {p['company']}" if p.get("company") else None)),
+           "---"]
+
     about = f"{name}" + (f" — {p['role']}" if p.get("role") else "") + \
             (f" at [[References/{safe_name(p['company'])}]]" if p.get("company") else "") + "."
-    body = ["", "## About", "", about, "", "## Articles", "", "![[Articles by Person.base]]", "",
-            "## Meetings", "", "![[Meetings.base]]", "", "## Deals", "", "![[Deal Metrics.base]]", "",
-            "## Mentions", "", "![[Mentions.base]]", "", "## Notes", ""]
+    body = [""]
+    if prof.get("photo"):
+        body += [f"![profile|160]({prof['photo']})", ""]
+    if prof.get("headline"):
+        body += [f"> {prof['headline']}", ""]
+    body += ["## About", ""]
+    body += [prof.get("about") or about, ""]
+    if prof:  # contact / LinkedIn block
+        meta = []
+        if prof.get("linkedin"):
+            meta.append(f"- **LinkedIn:** [{prof.get('public_id') or prof['linkedin']}]({prof['linkedin']})")
+        if prof.get("location"):
+            meta.append(f"- **Location:** {prof['location']}")
+        if prof.get("current_title") or prof.get("current_company"):
+            cur = " at ".join(x for x in (prof.get("current_title"), prof.get("current_company")) if x)
+            meta.append(f"- **Current:** {cur}")
+        if prof.get("followers"):
+            meta.append(f"- **Followers:** {prof['followers']:,}")
+        if meta:
+            body += meta + [""]
+    if prof.get("experience"):
+        body += ["## Experience", ""] + [_exp_line(e) for e in prof["experience"]] + [""]
+    if prof.get("education"):
+        body += ["## Education", ""] + [_edu_line(e) for e in prof["education"]] + [""]
+    if prof.get("skills"):
+        body += ["## Skills", "", ", ".join(prof["skills"]), ""]
+    if prof.get("certifications"):
+        body += ["## Certifications", ""] + [_cert_line(c) for c in prof["certifications"]] + [""]
+    if prof.get("honors"):
+        body += ["## Honors & Awards", ""] + [_honor_line(h) for h in prof["honors"]] + [""]
+    if prof.get("projects"):
+        body += ["## Projects", ""]
+        for pr in prof["projects"]:
+            t = pr.get("title") or "(project)"
+            d = f" — {pr['description']}" if pr.get("description") else ""
+            body.append(f"- **{t}**{d}")
+        body.append("")
+    body += ["## Articles", "", "![[Articles by Person.base]]", "",
+             "## Meetings", "", "![[Meetings.base]]", "", "## Deals", "", "![[Deal Metrics.base]]", "",
+             "## Mentions", "", "![[Mentions.base]]", "", "## Notes", ""]
     return "\n".join(fm) + "\n" + "\n".join(body)
 
 
@@ -449,6 +571,96 @@ def render_email(e, companies):
         # re-clean: older envelopes were normalized before the forward-cleaner fix
         bodytext = clean_body(e["body"]) or ex.get("summary") or ""
     return "\n".join(fm) + "\n" + bodytext + "\n"
+
+
+# Enhanced People base: adds LinkedIn / headline / location / company / followers
+# columns + a dedicated profiles view. Written over the scaffolded copy so the
+# source template vault stays pristine.
+PEOPLE_BASE = """filters:
+  and:
+    - categories.contains(link("People"))
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Name
+  note.headline:
+    displayName: Headline
+  note.profession:
+    displayName: Profession
+  note.org:
+    displayName: Organization
+  note.current_company:
+    displayName: Company
+  note.location:
+    displayName: Location
+  note.linkedin:
+    displayName: LinkedIn
+  note.linkedin_id:
+    displayName: LinkedIn ID
+  note.followers:
+    displayName: Followers
+  note.email:
+    displayName: Email
+  note.phone:
+    displayName: Phone
+  note.last_interaction:
+    displayName: Last Interaction
+  note.last_context:
+    displayName: Context
+views:
+  - type: table
+    name: All People
+    order:
+      - file.name
+      - headline
+      - org
+      - location
+      - last_interaction
+      - last_context
+      - email
+      - phone
+    sort:
+      - property: last_interaction
+        direction: DESC
+    columnSize:
+      file.name: 240
+      note.headline: 320
+  - type: table
+    name: LinkedIn Profiles
+    filters:
+      and:
+        - note.linkedin != ""
+    order:
+      - file.name
+      - headline
+      - current_company
+      - location
+      - followers
+      - linkedin_id
+      - linkedin
+    sort:
+      - property: followers
+        direction: DESC
+  - type: table
+    name: By Org
+    filters:
+      and:
+        - list(org).contains(this)
+    order:
+      - file.name
+      - profession
+      - last_interaction
+      - last_context
+    sort:
+      - property: file.name
+        direction: ASC
+"""
+
+
+def write_people_base(dest):
+    p = os.path.join(dest, "_templates", "Bases", "People.base")
+    if os.path.isdir(os.path.dirname(p)):
+        _write(p, PEOPLE_BASE)
 
 
 def render_category(sector):
@@ -490,6 +702,7 @@ def build_vault(dest, conn):
     """Generate the whole vault under `dest`. One bad row never aborts the run."""
     _email_seen.clear()
     scaffold(dest)
+    write_people_base(dest)   # enrich the People base with LinkedIn/profile columns
     companies, emails, people, obs, referred = build_model(conn)
 
     sectors = set()
