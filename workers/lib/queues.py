@@ -28,6 +28,7 @@ Q_INDEX = "gb_q_index"
 Q_BACKFILL = "gb_q_backfill"
 Q_ENRICH = "gb_q_enrich"
 Q_PROFILE = "gb_q_profile"
+Q_COMPANY = "gb_q_company"
 
 
 def send(conn: psycopg.Connection, queue: str, payload: dict[str, Any]) -> int:

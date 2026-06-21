@@ -18,6 +18,7 @@ import httpx
 
 BASE = os.environ.get("SCRAPPA_API_URL", "https://scrappa.co/api").rstrip("/")
 _LINKEDIN = re.compile(r"https?://([a-z]{2,3}\.)?linkedin\.com/in/[^\s?#)\"']+", re.I)
+_LI_COMPANY = re.compile(r"https?://([a-z]{2,3}\.)?linkedin\.com/company/[^\s?#)\"']+", re.I)
 
 
 def _key() -> str:
@@ -46,4 +47,19 @@ def find_linkedin(name: str, company: str = "") -> str | None:
         if m:
             return m.group(0).rstrip("/")
     m = _LINKEDIN.search(json.dumps(data))   # fallback: scan snippets/knowledge graph
+    return m.group(0).rstrip("/") if m else None
+
+
+def find_company_linkedin(name: str) -> str | None:
+    """Best-effort LinkedIn /company/ page URL for a company (1 credit). Only used
+    as a fallback for companies with no employee in the brain (most company URLs
+    come free from person experience entries)."""
+    if not name:
+        return None
+    data = search(f'{name} site:linkedin.com/company')
+    for res in data.get("organic_results") or []:
+        m = _LI_COMPANY.search(res.get("link") or "")
+        if m:
+            return m.group(0).rstrip("/")
+    m = _LI_COMPANY.search(json.dumps(data))
     return m.group(0).rstrip("/") if m else None

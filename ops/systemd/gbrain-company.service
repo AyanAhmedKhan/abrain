@@ -1,0 +1,22 @@
+# gbrain · LinkedIn COMPANY profile worker (Apify) — full company data, decoupled
+# from the paid pipeline. Consumes gb_q_company + backfills tracked companies that
+# have a LinkedIn URL but no profile yet. ZERO LLM tokens. Only scrapes companies
+# we track, once each. No-ops without APIFY_TOKEN / APIFY_COMPANY_ACTOR_ID.
+[Unit]
+Description=gbrain LinkedIn company profile worker (Apify)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.apify_company worker
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

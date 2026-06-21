@@ -72,6 +72,29 @@ def _slug_ok(name: str, url: str | None) -> bool:
     return any(t.lower() in slug for t in _toks(name) if len(t) >= 3)
 
 
+_CO_JUNK = {"unknown", "n/a", "na", "tbd", "other", "others", "none", "-"}
+
+
+def _is_company_name(name: str) -> bool:
+    n = (name or "").strip()
+    return len(n) >= 3 and n.lower() not in _CO_JUNK
+
+
+def _company_slug_ok(name: str, url: str | None) -> bool:
+    """Trust a /company/ URL only if its slug shares a company-name token (≥4
+    chars). Short all-token names accept by default (slugs vary too much)."""
+    m = re.search(r"/company/([^/?#]+)", url or "")
+    if not m:
+        return False
+    slug = re.sub(r"[^a-z0-9]", "", m.group(1).lower())
+    toks = [re.sub(r"[^a-z0-9]", "", t.lower()) for t in _toks(name) if len(t) >= 4]
+    return any(t and t in slug for t in toks) if toks else True
+
+
+def _enrich_companies_enabled() -> bool:
+    return os.environ.get("ENRICH_COMPANIES", "1").strip().lower() not in ("0", "false", "no", "")
+
+
 DAILY_CAP = int(os.environ.get("SCRAPPA_DAILY_CAP", "200"))
 IDLE_BATCH = 20
 IDLE_SLEEP = 5.0
@@ -85,9 +108,11 @@ def _key_set() -> bool:
 
 
 def _checked_today(conn) -> int:
+    """Combined daily Scrappa spend — persons + companies searched today."""
     return conn.execute(
-        "select count(*) c from gb_entity where type='person' "
-        "and attrs->>'linkedin_checked' = to_char(now(),'YYYY-MM-DD')"
+        "select count(*) c from gb_entity where "
+        "attrs->>'linkedin_checked' = to_char(now(),'YYYY-MM-DD') "
+        "or attrs->>'company_checked' = to_char(now(),'YYYY-MM-DD')"
     ).fetchone()["c"]
 
 
@@ -159,6 +184,50 @@ def _backfill_ids(conn, limit):
         "order by canonical limit %s", (limit,)).fetchall()]
 
 
+# ── company LinkedIn discovery (Scrappa fallback) ────────────
+# Most company URLs arrive FREE from person experience entries (apify_linkedin).
+# This only searches companies that still lack a URL — and only when ENRICH_COMPANIES
+# is on. Negative-cached (company_checked) → ≤1 credit per company ever.
+
+def _company_backfill_ids(conn, limit):
+    return [r["id"] for r in conn.execute(
+        "select id from gb_entity where type='company' "
+        "and coalesce(attrs->>'linkedin','')='' and attrs->>'company_checked' is null "
+        "order by canonical limit %s", (limit,)).fetchall()]
+
+
+def process_company(conn, company_id) -> str:
+    """Find one company's LinkedIn page (≤1 Scrappa call; negative-cached). On a
+    hit, hand off to the Apify company scraper via gb_q_company."""
+    e = conn.execute("select id, canonical, attrs from gb_entity where id=%s and type='company'",
+                     (company_id,)).fetchone()
+    if e is None:
+        return "missing"
+    a = e["attrs"] or {}
+    if a.get("linkedin") or a.get("company_checked"):
+        return "noop"  # already have a URL (often free from a person) — NO api call
+    name = e["canonical"]
+    if not _is_company_name(name):
+        conn.execute("update gb_entity set attrs = attrs || '{\"company_checked\":\"skip\"}'::jsonb where id=%s",
+                     (company_id,))
+        return f"[co] skip (bad name): {name}"
+    li = search.find_company_linkedin(name)
+    if li and not _company_slug_ok(name, li):
+        li = None
+    conn.execute(
+        "update gb_entity set attrs = attrs || jsonb_build_object('company_checked', to_char(now(),'YYYY-MM-DD'))"
+        + (" || jsonb_build_object('linkedin', %s::text)" if li else "")
+        + " where id=%s",
+        ((li, company_id) if li else (company_id,)),
+    )
+    if li:
+        try:
+            queues.send(conn, queues.Q_COMPANY, {"company_id": str(company_id), "url": li})
+        except Exception:  # noqa: BLE001
+            pass
+    return f"[co] {name}: {li or 'none'}"
+
+
 # ── continuous worker (queue + idle backfill) ────────────────
 
 def run(once: bool = False) -> None:
@@ -195,7 +264,7 @@ def run(once: bool = False) -> None:
                         print(f"[enrich] {pid} retry {m['read_ct']} ({exc})", flush=True)
             continue
 
-        # idle: backfill pre-existing people (bounded by remaining daily cap)
+        # idle: backfill pre-existing people first (bounded by remaining daily cap)
         remaining = max(0, DAILY_CAP - _checked_today(conn))
         ids = _backfill_ids(conn, min(IDLE_BATCH, remaining))
         for pid in ids:
@@ -204,10 +273,23 @@ def run(once: bool = False) -> None:
             except Exception as exc:  # noqa: BLE001
                 print(f"[enrich] backfill {pid} error: {exc!r}", flush=True)
                 break  # likely auth/credit — stop
-        if not ids:
-            if once:
-                return
-            time.sleep(IDLE_SLEEP)
+        if ids:
+            continue
+        # people drained → backfill company LinkedIn URLs for any company still
+        # missing one (free-first: companies with an employee already have a URL)
+        if _enrich_companies_enabled() and remaining > 0:
+            cids = _company_backfill_ids(conn, min(IDLE_BATCH, remaining))
+            for cid in cids:
+                try:
+                    print(f"[enrich] {process_company(conn, cid)}", flush=True)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[enrich] company backfill {cid} error: {exc!r}", flush=True)
+                    break
+            if cids:
+                continue
+        if once:
+            return
+        time.sleep(IDLE_SLEEP)
 
 
 # ── one-shot CLI (batch / company) ───────────────────────────
@@ -230,6 +312,15 @@ def main():
     elif cmd == "persons":
         n = enrich_persons(conn, int(sys.argv[2]) if len(sys.argv) > 2 else DAILY_CAP)
         print(f"[enrich] done ({n} found)", flush=True)
+    elif cmd == "companies":
+        n = 0
+        for cid in _company_backfill_ids(conn, int(sys.argv[2]) if len(sys.argv) > 2 else DAILY_CAP):
+            out = process_company(conn, cid)
+            print(f"[enrich] {out}", flush=True)
+            if out.endswith(": none") or "skip" in out or out == "noop":
+                continue
+            n += 1
+        print(f"[enrich] companies done ({n} found)", flush=True)
     else:
         print(__doc__); sys.exit(1)
 

@@ -70,6 +70,14 @@ export type PersonFull = {
   scraped_at: string | null;
 };
 
+export type CompanyProfile = {
+  company: string; entity_id: string; linkedin_url: string | null; public_id: string | null;
+  tagline: string | null; description: string | null; industry: string | null;
+  company_size: string | null; employee_count: number | null; hq: string | null;
+  founded: string | null; website: string | null; followers: number | null;
+  specialties: string[] | null; logo_url: string | null; scraped_at: string | null;
+};
+
 export const inr = (v: string | number | null): string => {
   if (v === null || v === undefined || v === "") return "—";
   const n = typeof v === "string" ? parseFloat(v) : v;

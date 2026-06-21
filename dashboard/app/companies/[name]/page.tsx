@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCompany, getCompanyEmails, inr } from "@/lib/data";
+import { getCompany, getCompanyEmails, getCompanyProfile, inr } from "@/lib/data";
 import { Badge, Pill } from "@/components/ui";
 
 export const dynamic = "force-dynamic";
@@ -29,17 +29,47 @@ export default async function Page({ params }: { params: { name: string } }) {
       </div>
     );
   }
-  const emails = await getCompanyEmails(name);
+  const [emails, lp] = await Promise.all([getCompanyEmails(name), getCompanyProfile(name)]);
   const founders = c.founders ?? [];
 
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/" className="text-accent hover:underline text-sm">← Dashboard</Link>
+        {lp?.logo_url && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={lp.logo_url} alt="" className="w-9 h-9 rounded object-contain bg-cream" />
+        )}
         <h1 className="text-2xl font-bold">{c.company}</h1>
         {c.has_deal && <span className="text-xs px-2 py-0.5 rounded bg-minttint text-mintdark font-semibold">DEAL</span>}
+        {lp?.linkedin_url && <a href={lp.linkedin_url} target="_blank" rel="noreferrer" className="text-accent hover:underline text-sm">LinkedIn ↗</a>}
         {(c.aliases ?? []).map((a) => <Pill key={a}>{a}</Pill>)}
       </div>
+
+      {lp && (
+        <section className="card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">LinkedIn</h2>
+            <span className="text-dim text-xs">via Apify{lp.scraped_at ? ` · ${String(lp.scraped_at).slice(0, 10)}` : ""}</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <Field label="Industry">{lp.industry}</Field>
+            <Field label="Company size">{lp.company_size}</Field>
+            <Field label="Employees on LinkedIn">{lp.employee_count?.toLocaleString() ?? null}</Field>
+            <Field label="Followers">{lp.followers?.toLocaleString() ?? null}</Field>
+            <Field label="HQ">{lp.hq}</Field>
+            <Field label="Founded">{lp.founded}</Field>
+            <Field label="Website">{lp.website ? <a href={lp.website} className="text-accent hover:underline" target="_blank" rel="noreferrer">link</a> : null}</Field>
+            <Field label="LinkedIn ID">{lp.public_id}</Field>
+          </div>
+          {lp.description && <p className="text-[15px] leading-relaxed mt-4 whitespace-pre-line">{lp.description}</p>}
+          {(lp.specialties ?? []).length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-4">
+              {(lp.specialties ?? []).map((s) => <span key={s} className="px-2 py-0.5 rounded-full text-xs bg-cream text-ink/70">{s}</span>)}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="card p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
         <Field label="Sector">{c.sector}{c.sub_sector ? ` · ${c.sub_sector}` : ""}</Field>

@@ -1,0 +1,13 @@
+[{
+  "id":"3032250","universalName":"dexter-capital-advisors",
+  "linkedinUrl":"https://www.linkedin.com/company/dexter-capital-advisors/",
+  "name":"Dexter Capital Advisors","website":"http://dextercapital.in/index.html",
+  "logo":"https://media.licdn.com/dms/image/v2/dexter_logo_400.jpg",
+  "foundedOn":{"month":null,"year":2013,"day":null},
+  "employeeCount":51,"employeeCountRange":{"start":2,"end":10},"followerCount":25174,
+  "description":"Dexter Capital Advisors is a boutique investment bank focused on providing the best in class services to growth stage companies as well as new age entrepreneurs in the early stage funding process.",
+  "companyType":"Privately Held","locations":[],"specialities":[],
+  "industries":[{"id":"45","name":"Investment Banking","title":"Investment Banking","hierarchy":"Financial Services > Capital Markets > Investment Banking"}],
+  "logos":[{"url":"https://media.licdn.com/dms/image/v2/dexter_logo_400.jpg","width":400,"height":400}],
+  "callToActionUrl":"http://dextercapital.in/index.html"
+}]

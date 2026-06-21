@@ -230,7 +230,10 @@ def store_profile(conn, j: dict) -> str:
     )
 
     # graph: works_at edges to companies we already track (suffix-tolerant match;
-    # dedup by company so the same firm across multiple roles → one edge)
+    # dedup by company so the same firm across multiple roles → one edge). Also
+    # harvest each company's LinkedIn URL FOR FREE from the experience entry and
+    # enqueue a full company scrape on first discovery (most-optimized path —
+    # no extra search/credit; gb_q_company dedups via attrs.company_scraped).
     edges, seen = 0, set()
     for e in p["experience"]:
         comp_id = _match_company(conn, e.get("companyName"))
@@ -240,7 +243,35 @@ def store_profile(conn, j: dict) -> str:
                 "insert into gb_edge (src, rel, dst) values (%s,'works_at',%s) on conflict do nothing",
                 (pid, comp_id))
             edges += 1
+            _attach_company_url(conn, comp_id, _company_url(e))
     return f"{p['name']} ({len(p['experience'])} jobs, {len(p['skills'])} skills, {edges} edges)"
+
+
+def _company_url(e: dict) -> str | None:
+    """LinkedIn company URL from an experience entry (free byproduct of a person
+    scrape): prefer the explicit URL, else construct from the numeric company id."""
+    u = (e.get("companyLinkedinUrl") or "").strip()
+    if u:
+        return u.split("?")[0].rstrip("/")
+    cid = e.get("companyId")
+    return f"https://www.linkedin.com/company/{cid}" if cid else None
+
+
+def _attach_company_url(conn, comp_id, url: str | None) -> None:
+    """Stamp a company's LinkedIn URL onto its entity (only if not already set)
+    and enqueue a one-time full scrape. Zero cost — derived from person data."""
+    if not comp_id or not url:
+        return
+    a = (conn.execute("select attrs from gb_entity where id=%s", (comp_id,)).fetchone() or {}).get("attrs") or {}
+    if a.get("linkedin"):
+        return  # already have a URL (and likely already enqueued) — no-op
+    conn.execute("update gb_entity set attrs = attrs || jsonb_build_object('linkedin', %s::text) where id=%s",
+                 (url, comp_id))
+    if not a.get("company_scraped"):
+        try:
+            queues.send(conn, queues.Q_COMPANY, {"company_id": str(comp_id), "url": url})
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ── Apify API ────────────────────────────────────────────────

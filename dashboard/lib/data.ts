@@ -1,5 +1,5 @@
 import { q } from "./db";
-import type { Company, Stats, EmailRow, Person, PersonFull } from "./types";
+import type { Company, Stats, EmailRow, Person, PersonFull, CompanyProfile } from "./types";
 
 export * from "./types"; // re-export types + inr for server pages
 
@@ -31,6 +31,14 @@ export const getDeals = () =>
 
 export const getCompany = (name: string) =>
   safe(q<Company>(`select ${CARD_COLS} from gb_company_card where company = $1`, [name]).then((r) => r[0] ?? null), null, "getCompany");
+
+export const getCompanyProfile = (name: string) =>
+  safe(q<CompanyProfile>(
+    `select company, entity_id, linkedin_url, public_id, tagline, description,
+            industry, company_size, employee_count, hq, founded, website, followers,
+            specialties, logo_url, scraped_at
+       from gb_company_full where company = $1`, [name]
+  ).then((r) => r[0] ?? null), null, "getCompanyProfile");
 
 export const getCompanyEmails = (name: string) =>
   safe(q<EmailRow>(

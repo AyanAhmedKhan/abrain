@@ -287,6 +287,34 @@ def build_model(conn):
         person["role"] = person.get("role") or r["current_title"]
         person["company"] = person.get("company") or r["current_company"]
 
+    # company LinkedIn: the URL/logo live on gb_entity.attrs (free harvest, set
+    # even before a full scrape); the rich profile lives in gb_company_profile.
+    for r in conn.execute(
+        "select canonical, attrs->>'linkedin' li, attrs->>'logo' logo "
+        "from gb_entity where type='company' and attrs->>'linkedin' is not null"
+    ).fetchall():
+        c = companies.get(r["canonical"])
+        if c:
+            c["linkedin"], c["logo"] = r["li"], r["logo"]
+    for r in conn.execute(
+        """select company, industry, company_size, employee_count, followers,
+                  founded, hq, website, description, public_id, specialties
+             from gb_company_full"""
+    ).fetchall():
+        c = companies.get(r["company"])
+        if not c:
+            continue
+        c["li_industry"] = r["industry"]
+        c["li_size"] = r["company_size"]
+        c["li_employees"] = r["employee_count"]
+        c["li_followers"] = r["followers"]
+        c["li_description"] = r["description"]
+        c["li_specialties"] = r["specialties"] or []
+        c["li_public_id"] = r["public_id"]
+        c["founded"] = c.get("founded") or r["founded"]
+        c["hq"] = c.get("hq") or r["hq"]
+        c["website"] = c.get("website") or r["website"]
+
     # reverse-aggregation: who referred which deals → investor: [companies]
     referred = defaultdict(list)
     for c in companies.values():
@@ -327,7 +355,11 @@ def render_company(c, obs, referred):
     fm.append(fm_list("type", type_links))
     fm.append(fm_list("people", people_links))
     fm += [fm_scalar("url", c["website"]), fm_scalar("founded", c["founded"]),
-           fm_scalar("hq", c["hq"])]
+           fm_scalar("hq", c["hq"]), fm_scalar("linkedin", c.get("linkedin")),
+           fm_scalar("linkedin_id", c.get("li_public_id")),
+           fm_scalar("industry", c.get("li_industry")),
+           fm_scalar("employees", c.get("li_employees")),
+           fm_scalar("followers", c.get("li_followers"))]
     if not is_inv:
         fm += [
             fm_scalar("revenue_latest", cr(c["revenue"])),
@@ -377,6 +409,26 @@ def render_company(c, obs, referred):
     # About / Business model
     body += ["## About", "", c["summary"] or "", "",
              "## Business Model", "", c["business_model"] or "", ""]
+    # LinkedIn (Apify, deterministic) — shown when we have a URL/profile
+    if c.get("linkedin"):
+        body += ["## LinkedIn", ""]
+        facts = []
+        if c.get("li_public_id"):
+            facts.append(f"- **Profile:** [{c['li_public_id']}]({c['linkedin']})")
+        else:
+            facts.append(f"- **Profile:** {c['linkedin']}")
+        if c.get("li_industry"):
+            facts.append(f"- **Industry:** {c['li_industry']}")
+        if c.get("li_size") or c.get("li_employees"):
+            facts.append(f"- **Size:** {c.get('li_size') or ''}"
+                         + (f" ({c['li_employees']} on LinkedIn)" if c.get("li_employees") else ""))
+        if c.get("li_followers"):
+            facts.append(f"- **Followers:** {c['li_followers']:,}")
+        body += facts + [""]
+        if c.get("li_description"):
+            body += [c["li_description"], ""]
+        if c.get("li_specialties"):
+            body += ["_Specialties: " + ", ".join(c["li_specialties"]) + "_", ""]
     # Traction
     body += ["## Traction & Metrics", ""]
     if c["key_metrics"]:
