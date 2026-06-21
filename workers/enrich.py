@@ -22,11 +22,55 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 
 from workers.lib import queues, search
 from workers.lib.db import connect
+
+# Person-name edge cases — these "names" are extraction artifacts (role buckets,
+# section headers, departments), not people. Searching them wastes Scrappa credits
+# and returns the wrong profile, so we skip them before any API call.
+_ROLE_TOKENS = {
+    "founder", "founders", "cofounder", "co-founder", "ceo", "cfo", "cto", "coo",
+    "cmo", "cxo", "chairman", "chairperson", "accounts", "account", "finance",
+    "sales", "marketing", "admin", "hr", "hrops", "ops", "operations", "legal",
+    "support", "deals", "deal", "mentions", "mention", "dormant", "active",
+    "investor", "investors", "advisor", "advisors", "team", "unknown", "tbd",
+    "na", "contact", "contacts", "info", "founder/ceo", "promoter", "promoters",
+}
+_NAME_OK = re.compile(r"^[A-Za-z][A-Za-z.'\- ]+$")
+
+
+def _toks(name: str) -> list[str]:
+    return [t for t in re.split(r"[\s.]+", (name or "")) if t]
+
+
+def _is_person_name(name: str) -> bool:
+    """True only for plausible human names (letters/space/.'- , ≥3 chars, no
+    digits/slashes/@, and no role/section placeholder token)."""
+    n = (name or "").strip()
+    if len(n) < 3 or any(c.isdigit() for c in n) or "/" in n or "@" in n:
+        return False
+    if not _NAME_OK.match(n):
+        return False
+    toks = _toks(n)
+    if any(t.lower().strip("-") in _ROLE_TOKENS for t in toks):
+        return False
+    return True
+
+
+def _slug_ok(name: str, url: str | None) -> bool:
+    """Trust a returned LinkedIn URL only if its /in/ slug shares a name token
+    (≥3 chars) with the person — guards against wrong-person matches like
+    'Ankur Aggarwal' → /in/ishansukul."""
+    m = re.search(r"/in/([^/?#]+)", url or "")
+    if not m:
+        return False
+    slug = re.sub(r"[^a-z]", "", m.group(1).lower())  # drop digits/hyphens/encoding
+    return any(t.lower() in slug for t in _toks(name) if len(t) >= 3)
+
 
 DAILY_CAP = int(os.environ.get("SCRAPPA_DAILY_CAP", "200"))
 IDLE_BATCH = 20
@@ -78,11 +122,18 @@ def process(conn, person_id) -> str:
     a = e["attrs"] or {}
     if a.get("linkedin") or a.get("linkedin_checked"):
         return "noop"  # already known or already attempted — NO api call
-    li = search.find_linkedin(e["canonical"], a.get("company") or "")
+    name = e["canonical"]
+    company = a.get("company") or ""
+    # name edge cases: skip placeholders, and single-token names with no company
+    # context (un-disambiguatable) — mark skipped, spend NO credit.
+    if not _is_person_name(name) or (len(_toks(name)) < 2 and not company):
+        conn.execute("update gb_entity set attrs = attrs || '{\"linkedin_checked\":\"skip\"}'::jsonb where id=%s",
+                     (person_id,))
+        return f"skip (bad name): {name}"
+    li = search.find_linkedin(name, company)
+    if li and not _slug_ok(name, li):
+        li = None  # wrong-person / low-confidence match — discard, keep checked
     # stamp checked (today) regardless of outcome → never searched again
-    patch = {"linkedin_checked": "__DATE__"}
-    if li:
-        patch["linkedin"] = li
     conn.execute(
         "update gb_entity set attrs = attrs || jsonb_build_object('linkedin_checked', to_char(now(),'YYYY-MM-DD'))"
         + (" || jsonb_build_object('linkedin', %s::text)" if li else "")
