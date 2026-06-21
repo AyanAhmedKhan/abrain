@@ -8,6 +8,11 @@ const CARD_COLS = `company, sector, sub_sector, stage, round_type, poc, fitment,
   ebitda_inr_cr, has_deal, business_model, summary, risks, key_metrics, founders,
   existing_investors, referred_by, aliases, note_count, last_interaction`;
 
+// exclude placeholder "person" entities (role/section labels the pipeline created,
+// e.g. "Active US Founder", "CEO-Founder", "HR Operations") from people listings.
+const NOT_PLACEHOLDER =
+  `e.canonical !~* '\\y(founder|co-?founder|ceo|cfo|cto|coo|cmo|cxo|chairman|investor|advisor|partner|principal|associate|analyst|team|deals?|mentions?|unknown|active|dormant|hr|hrops|operations|finance|sales|marketing|admin|accounts?|legal|promoters?)\\y'`;
+
 // All getters fail soft: a transient DB error returns a safe fallback (null/[])
 // so the page renders a graceful "no data" state instead of a 500. (app/error.tsx
 // remains the backstop for anything unexpected.)
@@ -81,6 +86,7 @@ export const getColleagues = (id: string) =>
        join gb_entity e on e.id = other.src and e.type = 'person'
        left join gb_person_profile p on p.person_id = e.id
       where me.src = $1 and me.rel = 'works_at' and other.src <> $1
+        and ${NOT_PLACEHOLDER}
       order by has_profile desc, person limit 60`, [id]
   ), [], "getColleagues");
 
@@ -109,6 +115,6 @@ export const getCompanyPeople = (name: string) =>
        join cluster cl on cl.id = ed.dst
        join gb_entity e on e.id = ed.src and e.type='person'
        left join gb_person_profile p on p.person_id = e.id
-      where ed.rel = 'works_at'
+      where ed.rel = 'works_at' and ${NOT_PLACEHOLDER}
       order by has_profile desc, person`, [name]
   ), [], "getCompanyPeople");

@@ -337,7 +337,7 @@ def build_model(conn):
             where ed.rel = 'works_at'"""
     ).fetchall():
         c = companies.get(r["company"])
-        if c is not None:
+        if c is not None and _is_person_name(r["person"]):   # drop placeholder entities
             c.setdefault("team", [])
             if r["person"] not in c["team"]:
                 c["team"].append(r["person"])
