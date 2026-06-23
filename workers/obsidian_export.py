@@ -198,7 +198,7 @@ def build_model(conn):
             "name": name, "sector": None, "sub_sector": None, "stage": None,
             "round_type": None, "business_model": None, "summary": None,
             "ask": None, "valuation": None, "revenue": None, "revenue_period": None,
-            "ebitda": None, "founders": {}, "key_metrics": [], "risks": [],
+            "ebitda": None, "founders": {}, "contacts": {}, "key_metrics": [], "risks": [],
             "actions": [], "opinions": [], "emails": [], "last": "",
             "hq": None, "website": None, "founded": None, "poc": None,
             "fitment": None, "referred_by": None, "aliases": [], "existing_investors": [],
@@ -232,21 +232,29 @@ def build_model(conn):
         c["revenue"] = latest(c["revenue"], ex.get("revenue_inr_cr"))
         c["revenue_period"] = latest(c["revenue_period"], ex.get("revenue_period"))
         c["ebitda"] = latest(c["ebitda"], ex.get("ebitda_inr_cr"))
-        for f in ex.get("founders") or []:
+        def _add(f, bucket):
             nm = (f.get("name") or "").strip()
-            if nm and _is_person_name(nm):
-                c["founders"][nm] = f.get("role") or c["founders"].get(nm)
-                p = people.get(nm)
-                if p is None:
-                    people[nm] = {"role": f.get("role"), "company": name,
-                                  "linkedin": f.get("linkedin"), "last": date}
-                else:  # merge: fill gaps, advance company on newer mention
-                    if f.get("role") and not p.get("role"):
-                        p["role"] = f.get("role")
-                    if f.get("linkedin") and not p.get("linkedin"):
-                        p["linkedin"] = f.get("linkedin")
-                    if not p.get("dexter") and date >= (p.get("last") or ""):
-                        p["last"], p["company"] = date, name
+            if not nm or not _is_person_name(nm):
+                return
+            bucket[nm] = f.get("role") or bucket.get(nm)
+            p = people.get(nm)
+            if p is None:
+                people[nm] = {"role": f.get("role"), "company": name,
+                              "linkedin": f.get("linkedin"), "last": date}
+            else:  # merge: fill gaps, advance company on newer mention
+                if f.get("role") and not p.get("role"):
+                    p["role"] = f.get("role")
+                if f.get("linkedin") and not p.get("linkedin"):
+                    p["linkedin"] = f.get("linkedin")
+                if not p.get("dexter") and date >= (p.get("last") or ""):
+                    p["last"], p["company"] = date, name
+
+        for f in ex.get("founders") or []:
+            _add(f, c["founders"])
+        for f in ex.get("key_people") or []:
+            nm = (f.get("name") or "").strip()
+            if nm not in c["founders"]:          # don't double-list a founder
+                _add(f, c["contacts"])
         for k in ex.get("key_metrics") or []:
             if k and k not in c["key_metrics"]:
                 c["key_metrics"].append(k)
@@ -388,7 +396,7 @@ def render_company(c, obs, referred, ref_names=frozenset()):
     type_links = [f"[[Categories/{safe_name(type_cat)}]]"] if type_cat else cats
     stage = canon_stage(c["stage"])
     aliases = list(dict.fromkeys((c["aliases"] or []) + make_aliases(name)))
-    team_all = c.get("team_current", []) + c.get("team_past", [])
+    team_all = list(c.get("contacts", {})) + c.get("team_current", []) + c.get("team_past", [])
     people_links = list(dict.fromkeys(
         [wl(n) for n in c["founders"]] + [wl(n) for n in sorted(c["dexter"])] + [wl(n) for n in team_all]))
     email_links = [wl(e, "Email") for e in c["emails"]]
@@ -441,14 +449,17 @@ def render_company(c, obs, referred, ref_names=frozenset()):
 
     body = ["", "## Activity", "", "![[Company Activity.base]]", "",
             "## Mentions", "", "![[Mentions.base]]", ""]
-    # People table
+    # People table — founders, other key people (execs/contacts), Dexter team
+    contacts = {n: r for n, r in c.get("contacts", {}).items() if n not in c["founders"]}
     body += ["## People", "", "| Name | Role | Organization | Email | Phone |",
              "|------|------|-------------|-------|-------|"]
     for n, role in c["founders"].items():
-        body.append(f"| {wl(n)} | {role or ''} | {name} | | |")
+        body.append(f"| {wl(n)} | {role or 'Founder'} | {name} | | |")
+    for n, role in contacts.items():
+        body.append(f"| {wl(n)} | {role or 'Contact'} | {name} | | |")
     for n in sorted(c["dexter"]):
         body.append(f"| {wl(n)} | | Dexter Capital | | |")
-    if not c["founders"] and not c["dexter"]:
+    if not (c["founders"] or contacts or c["dexter"]):
         body.append("| | | | | |")
     body.append("")
     # Team — live current roster (Team.base = people whose org → this company) +

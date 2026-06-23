@@ -1,5 +1,9 @@
 import { q } from "./db";
-import type { Company, Stats, EmailRow, Person, PersonFull, CompanyProfile, OrgPerson } from "./types";
+import type {
+  Company, Stats, EmailRow, Person, PersonFull, CompanyProfile, OrgPerson,
+  PipelineDeal, FinPoint, Inbox, Task,
+} from "./types";
+import { PIPELINE_STAGES } from "./types";
 
 export * from "./types"; // re-export types + inr for server pages
 
@@ -51,6 +55,68 @@ export const getCompanyEmails = (name: string) =>
        from gb_email_log where company = $1 order by date desc nulls last`,
     [name],
   ), [], "getCompanyEmails");
+
+// ── pipeline (Kanban) ────────────────────────────────────────
+export const getPipeline = () =>
+  safe(q<PipelineDeal>(
+    `select company, entity_id, pipeline_stage, owner, sector, round_stage, round_type,
+            ask_inr_cr, valuation_inr_cr, revenue_inr_cr, poc, fitment, last_interaction, has_deal
+       from gb_deal_pipeline
+      order by ask_inr_cr desc nulls last, company`), [], "getPipeline");
+
+// move a deal to a stage (writes attrs.pipeline_stage on the company entity).
+export async function setDealStage(entityId: string, stage: string): Promise<boolean> {
+  if (!(PIPELINE_STAGES as readonly string[]).includes(stage)) return false;
+  try {
+    await q("update gb_entity set attrs = attrs || jsonb_build_object('pipeline_stage', $1::text) where id = $2 and type='company'", [stage, entityId]);
+    return true;
+  } catch (e) { console.error("[data] setDealStage", e); return false; }
+}
+
+export async function setDealOwner(entityId: string, owner: string): Promise<boolean> {
+  try {
+    await q("update gb_entity set attrs = attrs || jsonb_build_object('deal_owner', $1::text) where id = $2 and type='company'", [owner, entityId]);
+    return true;
+  } catch (e) { console.error("[data] setDealOwner", e); return false; }
+}
+
+// ── financial trends ─────────────────────────────────────────
+export const getCompanyFinancials = (name: string) =>
+  safe(q<FinPoint>(
+    `select metric, value_num, period, as_of, created_at
+       from gb_company_financials where company = $1
+      order by metric, coalesce(as_of, created_at::date), created_at`, [name]), [], "getCompanyFinancials");
+
+// ── inbox (follow-ups, new deals, quiet, fresh financials) ───
+export const getInbox = (): Promise<Inbox> => safe((async () => {
+  const [tasks, newDeals, quiet, freshFinancials] = await Promise.all([
+    q<Task>(`select id, description, owner, due_date, priority, company, company_id, overdue
+               from gb_open_tasks order by overdue desc, due_date asc nulls last, created_at desc limit 50`),
+    q<{ company: string; sector: string | null; ask_inr_cr: string | null; seen: string }>(
+      `with firstseen as (
+         select extraction->>'company_name' company, min(occurred_at) seen
+           from gb_envelope where status='indexed' and coalesce(extraction->>'company_name','')<>''
+          group by 1)
+       select c.company, c.sector, c.ask_inr_cr, f.seen
+         from gb_company_card c join firstseen f on f.company = c.company
+        where f.seen >= now() - interval '7 days' order by f.seen desc limit 25`),
+    q<{ company: string; sector: string | null; last_interaction: string | null }>(
+      `select company, sector, last_interaction from gb_company_card
+        where has_deal and last_interaction is not null
+          and last_interaction < current_date - interval '21 days'
+        order by last_interaction asc limit 20`),
+    q<{ company: string; metric: string; value_num: string | null; period: string | null; as_of: string | null }>(
+      `select company, metric, value_num, period, as_of from gb_company_financials
+        where created_at >= now() - interval '7 days'
+        order by created_at desc limit 25`),
+  ]);
+  return { tasks, newDeals, quiet, freshFinancials };
+})(), { tasks: [], newDeals: [], quiet: [], freshFinancials: [] }, "getInbox");
+
+export async function markTaskDone(id: string): Promise<boolean> {
+  try { await q("update gb_task set status='done' where id = $1", [id]); return true; }
+  catch (e) { console.error("[data] markTaskDone", e); return false; }
+}
 
 export const getPeople = () =>
   safe(q<Person>(

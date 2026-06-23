@@ -84,6 +84,33 @@ export type CompanyProfile = {
   specialties: string[] | null; logo_url: string | null; scraped_at: string | null;
 };
 
+export type PipelineDeal = {
+  company: string; entity_id: string; pipeline_stage: string; owner: string | null;
+  sector: string | null; round_stage: string | null; round_type: string | null;
+  ask_inr_cr: string | null; valuation_inr_cr: string | null; revenue_inr_cr: string | null;
+  poc: string | null; fitment: string | null; last_interaction: string | null; has_deal: boolean;
+};
+
+export const PIPELINE_STAGES = [
+  "Sourced", "Screening", "Diligence", "IC", "Term Sheet", "Closed/Passed",
+] as const;
+
+export type FinPoint = {
+  metric: string; value_num: string | null; period: string | null; as_of: string | null; created_at: string;
+};
+
+export type Task = {
+  id: string; description: string; owner: string | null; due_date: string | null;
+  priority: string | null; company: string | null; company_id: string | null; overdue: boolean;
+};
+
+export type Inbox = {
+  tasks: Task[];
+  newDeals: { company: string; sector: string | null; ask_inr_cr: string | null; seen: string }[];
+  quiet: { company: string; sector: string | null; last_interaction: string | null }[];
+  freshFinancials: { company: string; metric: string; value_num: string | null; period: string | null; as_of: string | null }[];
+};
+
 export const inr = (v: string | number | null): string => {
   if (v === null || v === undefined || v === "") return "—";
   const n = typeof v === "string" ? parseFloat(v) : v;

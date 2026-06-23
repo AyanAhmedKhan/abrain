@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, inr } from "@/lib/data";
+import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getCompanyFinancials, inr } from "@/lib/data";
 import { Badge, Pill, Chip } from "@/components/ui";
 import { Logo, Avatar } from "@/components/Img";
+import { Metric } from "@/components/Chart";
 
 export const dynamic = "force-dynamic";
 
@@ -30,10 +31,20 @@ export default async function Page({ params }: { params: { name: string } }) {
       </div>
     );
   }
-  const [emails, lp, orgPeople] = await Promise.all([
-    getCompanyEmails(name), getCompanyProfile(name), getCompanyPeople(name),
+  const [emails, lp, orgPeople, fin] = await Promise.all([
+    getCompanyEmails(name), getCompanyProfile(name), getCompanyPeople(name), getCompanyFinancials(name),
   ]);
   const founders = c.founders ?? [];
+
+  // group the financial time-series by metric → points for the trend charts
+  const series = (m: string) => fin
+    .filter((f) => f.metric === m && f.value_num != null)
+    .map((f) => ({ label: f.period || (f.as_of ? String(f.as_of).slice(0, 7) : ""), value: parseFloat(f.value_num as string) }))
+    .filter((p) => !Number.isNaN(p.value));
+  const rev = series("revenue"), val = series("valuation"), ebitda = series("ebitda");
+  const lastRev = rev.at(-1)?.value, lastVal = val.at(-1)?.value;
+  const multiple = lastRev && lastVal ? (lastVal / lastRev).toFixed(1) : null;
+  const hasTrends = rev.length + val.length + ebitda.length > 0;
 
   return (
     <div className="space-y-5">
@@ -93,6 +104,20 @@ export default async function Page({ params }: { params: { name: string } }) {
         <Field label="Website">{c.website ? <a href={c.website} className="text-accent hover:underline" target="_blank" rel="noreferrer">link</a> : "—"}</Field>
         <Field label="Last interaction">{c.last_interaction ? String(c.last_interaction).slice(0, 10) : "—"}</Field>
       </div>
+
+      {hasTrends && (
+        <section className="card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="section-title">Financial trends</h2>
+            {multiple && <span className="text-dim text-xs">Valuation / Revenue ≈ <b className="text-ink tabular-nums">{multiple}×</b></span>}
+          </div>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <Metric title="Revenue" points={rev} />
+            <Metric title="Valuation" points={val} />
+            <Metric title="EBITDA" points={ebitda} />
+          </div>
+        </section>
+      )}
 
       {(() => {
         const current = orgPeople.filter((op) => op.current !== false);

@@ -263,6 +263,19 @@ def store_profile(conn, j: dict, person_id=None) -> str:
          json.dumps(j)),
     )
 
+    # dedup-on-write by LinkedIn identity: if any OTHER person entity resolves to
+    # the same /in/ slug, merge it into this one (same LinkedIn = same person —
+    # the strongest key). Keeps the people list clean as profiles land.
+    slug = re.sub(r"[^a-z0-9]", "", (p["public_id"] or "").lower()) or None
+    if slug:
+        from workers.dedup import _li_slug, _merge  # lazy import (avoids cycle)
+        for r in conn.execute(
+            "select id, attrs, keys from gb_entity where type='person' and id<>%s "
+            "and (coalesce(attrs->>'public_id','')<>'' or coalesce(attrs->>'linkedin','')<>'' "
+            "or coalesce(keys->>'linkedin','')<>'')", (pid,)).fetchall():
+            if _li_slug(r["attrs"], r["keys"]) == slug:
+                _merge(conn, {"id": pid}, {"id": r["id"]}, "person")
+
     # graph: works_at edges to companies we already track (suffix-tolerant match;
     # dedup by company so the same firm across multiple roles → one edge). Also
     # harvest each company's LinkedIn URL FOR FREE from the experience entry and

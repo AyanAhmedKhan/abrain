@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 
 const tabs = [
   { href: "/", label: "Dashboard" },
+  { href: "/pipeline", label: "Pipeline" },
   { href: "/deals", label: "Deals" },
   { href: "/people", label: "People" },
+  { href: "/inbox", label: "Inbox" },
 ];
 
 export default function Nav() {

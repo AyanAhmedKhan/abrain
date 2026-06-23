@@ -1,0 +1,11 @@
+# gbrain · weekly digest (follow-ups, new deals, quiet companies, financials).
+# Logs the digest; emails it only if SMTP_* is set in .env.
+[Unit]
+Description=gbrain weekly digest
+After=network-online.target
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.digest

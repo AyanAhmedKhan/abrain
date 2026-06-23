@@ -28,37 +28,7 @@ import time
 
 from workers.lib import queues, search
 from workers.lib.db import connect
-
-# Person-name edge cases — these "names" are extraction artifacts (role buckets,
-# section headers, departments), not people. Searching them wastes Scrappa credits
-# and returns the wrong profile, so we skip them before any API call.
-_ROLE_TOKENS = {
-    "founder", "founders", "cofounder", "co-founder", "ceo", "cfo", "cto", "coo",
-    "cmo", "cxo", "chairman", "chairperson", "accounts", "account", "finance",
-    "sales", "marketing", "admin", "hr", "hrops", "ops", "operations", "legal",
-    "support", "deals", "deal", "mentions", "mention", "dormant", "active",
-    "investor", "investors", "advisor", "advisors", "team", "unknown", "tbd",
-    "na", "contact", "contacts", "info", "founder/ceo", "promoter", "promoters",
-}
-_NAME_OK = re.compile(r"^[A-Za-z][A-Za-z.'\- ]+$")
-
-
-def _toks(name: str) -> list[str]:
-    return [t for t in re.split(r"[\s.]+", (name or "")) if t]
-
-
-def _is_person_name(name: str) -> bool:
-    """True only for plausible human names (letters/space/.'- , ≥3 chars, no
-    digits/slashes/@, and no role/section placeholder token)."""
-    n = (name or "").strip()
-    if len(n) < 3 or any(c.isdigit() for c in n) or "/" in n or "@" in n:
-        return False
-    if not _NAME_OK.match(n):
-        return False
-    toks = _toks(n)
-    if any(t.lower().strip("-") in _ROLE_TOKENS for t in toks):
-        return False
-    return True
+from workers.lib.names import is_person_name as _is_person_name, name_tokens as _toks
 
 
 def _slug_ok(name: str, url: str | None) -> bool:

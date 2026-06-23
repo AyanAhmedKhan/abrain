@@ -25,6 +25,9 @@ markdown — with exactly these fields (use null when unknown):
   "revenue_period": str|null,     // e.g. "FY26", "TTM"
   "ebitda_inr_cr": number|null,
   "founders": [{"name": str, "role": str|null, "linkedin": str|null}],
+                                  // REAL named individuals only (see Rules)
+  "key_people": [{"name": str, "role": str|null, "linkedin": str|null}],
+                                  // non-founder execs / named contacts (see Rules)
   "key_metrics": [str],           // ARR, growth, margins, users — as stated
   "business_model": str|null,
   "summary": str,                 // 3-5 sentence investment summary
@@ -49,6 +52,26 @@ Rules:
 - company_name must never be null: if it isn't explicit in the body, take it
   from the subject line (e.g. "Call Notes | Acme Robotics" → "Acme Robotics";
   "Post Call Notes with Lawyered" → "Lawyered"). Strip "Fwd:"/"Re:" prefixes.
+  Use the company's COMMON / brand name as company_name; put legal long-forms,
+  suffixes and alternate spellings in aliases (e.g. company_name "Dexter Capital",
+  aliases ["Dexter Capital Advisors", "Dexter Ventures"]). Do not put "Pvt Ltd",
+  "Private Limited", "Inc", etc. in company_name.
+- founders: list ONLY real, NAMED individuals (founders + key executives) of the
+  PRIMARY company. Give each person's FULL name exactly as written, including the
+  surname whenever it appears (prefer "Manish Jain" over "Manish"). One entry per
+  distinct person — never duplicate. NEVER output a role, title, department, team,
+  or placeholder as a name — e.g. "Founder", "CEO", "Co-founder", "Promoter",
+  "Management", "The Team", "HR", "Finance", "Active US Founder", "Investor",
+  "Unknown". If someone is referenced only by role with NO actual name, OMIT them.
+  Keep an honorific only when attached to a name ("Dr. Gaurav Garg" is fine).
+- key_people: other NAMED individuals at the PRIMARY company who are NOT founders
+  — senior executives (CFO, COO, CXO, VP, Head of X, GM) and named points of
+  contact. SAME name rules as founders (real full names only; never roles or
+  placeholders). Do NOT repeat anyone already listed in founders. Empty list if
+  none are named.
+- Keep the people-sets SEPARATE and never mix them: founders[] = the company's
+  founders; key_people[] = its other named execs/contacts; existing_investors[] =
+  backers already on the cap table; referred_by = who introduced the deal.
 - poc / fitment: extract ONLY if the notes explicitly state them. Strip any
   parenthetical (e.g. "Mid (too small)" → "Mid"). Use null if not stated — never guess.
 - existing_investors: only investors/angels already on the cap table or named as

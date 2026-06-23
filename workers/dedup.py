@@ -163,6 +163,17 @@ def _same_person(a, b):
             return True, "name-prefix + shared company + shared thread"
         if shared_co and short["deg"] == 0:
             return True, "name-prefix stub + shared company"
+    # no strong key on EITHER side → corroborate with context, scaled to how
+    # specific the name is (full multi-token name needs one signal; a bare first
+    # name needs both company AND thread; otherwise leave for manual review).
+    shared_co = bool(a["comps"] & b["comps"])
+    shared_thr = bool(a["threads"] & b["threads"])
+    if ta and ta == tb:
+        if len(ta) >= 2 and (shared_co or shared_thr):
+            return True, "same full name + shared " + ("company" if shared_co else "thread")
+        if shared_co and shared_thr:
+            return True, "same name + shared company + thread"
+        return False, "same name but no shared company/thread"
     return False, "unverified (name only)"
 
 

@@ -23,6 +23,7 @@ import time
 from workers.lib import queues, storage
 from workers.lib.db import connect
 from workers.lib.gemini import ESCALATE_MODEL, generate_json, generate_json_from_pdf
+from workers.lib.names import is_person_name
 from workers.lib.note_schema import PROMPT
 from workers.lib.num import safe_num
 
@@ -89,10 +90,16 @@ def fan_out(conn, envelope_id: str, env: dict, note: dict) -> None:
     })
 
     enrich_on = bool(os.environ.get("SCRAPPA_API_KEY", "").strip())
-    for f in note.get("founders") or []:
-        pid = upsert_entity(conn, "person", f.get("name") or "", {
+
+    def add_person(f, relation):
+        name = (f.get("name") or "").strip()
+        # write-time identity gate: skip role/section placeholders ("Active US
+        # Founder", "CEO/Founder", "The Team") so they never become person nodes.
+        if not is_person_name(name):
+            return
+        pid = upsert_entity(conn, "person", name, {
             "role": f.get("role"), "company": note.get("company_name"),
-            "linkedin": f.get("linkedin"),
+            "linkedin": f.get("linkedin"), "relation": relation,
         })
         edge(conn, pid, "works_at", company_id, envelope_id, env.get("occurred_at"))
         # async LinkedIn enrichment (decoupled; the enrich worker dedups so a
@@ -100,6 +107,11 @@ def fan_out(conn, envelope_id: str, env: dict, note: dict) -> None:
         # and we don't already have a LinkedIn for them.
         if enrich_on and pid and not f.get("linkedin"):
             queues.send(conn, queues.Q_ENRICH, {"person_id": str(pid)})
+
+    for f in note.get("founders") or []:
+        add_person(f, "founder")
+    for f in note.get("key_people") or []:
+        add_person(f, "contact")
 
     if note.get("round_type") or note.get("ask_inr_cr"):
         deal_id = upsert_entity(
