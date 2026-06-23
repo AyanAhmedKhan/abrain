@@ -112,9 +112,12 @@ def retrieve(conn, question: str, k: int = TOP_K) -> list[dict]:
 
 def ask(question: str, k: int = TOP_K) -> dict:
     conn = connect()
-    facts = deal_facts(conn)
-    dos = dossier(conn, question)
-    hits = retrieve(conn, question, k)
+    try:
+        facts = deal_facts(conn)
+        dos = dossier(conn, question)
+        hits = retrieve(conn, question, k)
+    finally:
+        conn.close()  # one-shot per request — don't leak under the long-lived server
     chunks = "\n\n".join(
         f"[{h['company'] or '?'} — {(h['title'] or '').replace(chr(10),' ')[:60]}]\n"
         f"{(h['text'] or '').strip()[:MAX_CHUNK_CHARS]}" for h in hits

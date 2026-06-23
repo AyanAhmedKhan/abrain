@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getCompanyFinancials, inr } from "@/lib/data";
+import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getCompanyFinancials, getIntroPaths, inr } from "@/lib/data";
 import { Badge, Pill, Chip } from "@/components/ui";
 import { Logo, Avatar } from "@/components/Img";
 import { Metric } from "@/components/Chart";
@@ -31,10 +31,12 @@ export default async function Page({ params }: { params: { name: string } }) {
       </div>
     );
   }
-  const [emails, lp, orgPeople, fin] = await Promise.all([
+  const [emails, lp, orgPeople, fin, intro] = await Promise.all([
     getCompanyEmails(name), getCompanyProfile(name), getCompanyPeople(name), getCompanyFinancials(name),
+    getIntroPaths(name, c.referred_by),
   ]);
   const founders = c.founders ?? [];
+  const hasIntro = !!intro.referred_by || intro.bridges.length > 0 || intro.investors.length > 0;
 
   // group the financial time-series by metric → points for the trend charts
   const series = (m: string) => fin
@@ -197,6 +199,42 @@ export default async function Page({ params }: { params: { name: string } }) {
           </section>
         )}
       </div>
+
+      {hasIntro && (
+        <section className="card p-5">
+          <h2 className="section-title mb-3">Warm intro paths</h2>
+          <div className="space-y-3 text-sm">
+            {intro.referred_by && (
+              <div>↪ Introduced by <span className="font-medium">{intro.referred_by}</span></div>
+            )}
+            {intro.investors.length > 0 && (
+              <div>
+                <div className="text-dim text-xs uppercase tracking-wider font-semibold mb-1">Via investors</div>
+                <div className="flex flex-wrap gap-2">
+                  {intro.investors.map((iv) => (
+                    <Link key={iv.investor_id} href={`/investors/${encodeURIComponent(iv.investor)}`} className="px-2 py-0.5 rounded-full text-xs bg-accenttint text-accentink hover:underline">
+                      {iv.investor}{iv.portfolio > 1 ? ` · ${iv.portfolio} deals` : ""}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+            {intro.bridges.length > 0 && (
+              <div>
+                <div className="text-dim text-xs uppercase tracking-wider font-semibold mb-1">Shared-employer connectors</div>
+                <ul className="space-y-1">
+                  {intro.bridges.map((b, i) => (
+                    <li key={i} className="leading-snug">
+                      <span className="font-medium">{b.connector}</span>{b.is_dexter && <span className="ml-1 text-[10px] font-semibold text-accentink bg-accenttint rounded px-1">DEXTER</span>}
+                      <span className="text-dim"> → both at <span className="text-ink">{b.via_company}</span> → reach <span className="text-ink">{b.person}</span></span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="card p-5">
         <h2 className="section-title mb-3">Call notes ({emails.length})</h2>

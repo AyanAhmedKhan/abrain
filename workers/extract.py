@@ -113,6 +113,10 @@ def fan_out(conn, envelope_id: str, env: dict, note: dict) -> None:
     for f in note.get("key_people") or []:
         add_person(f, "contact")
 
+    # promote existing_investors → investor entities + invests_in edges
+    from workers.investors import link as link_investors
+    link_investors(conn, company_id, note.get("existing_investors"), envelope_id)
+
     if note.get("round_type") or note.get("ask_inr_cr"):
         deal_id = upsert_entity(
             conn, "deal", f"{note.get('company_name')} — {note.get('round_type') or 'Round'}",

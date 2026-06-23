@@ -111,6 +111,13 @@ export type Inbox = {
   freshFinancials: { company: string; metric: string; value_num: string | null; period: string | null; as_of: string | null }[];
 };
 
+export type InvestorRow = { investor: string; investor_id: string; portfolio: number; sectors: string | null; companies: string[] | null };
+export type InvestorPortfolioRow = { company: string; sector: string | null; stage: string | null; ask_inr_cr: string | null; last_interaction: string | null };
+export type CoInvestor = { investor: string; shared: number };
+export type CompanyInvestor = { investor: string; investor_id: string; portfolio: number };
+export type Bridge = { connector: string; connector_id: string; via_company: string; person: string; is_dexter: boolean };
+export type IntroPaths = { referred_by: string | null; bridges: Bridge[]; investors: CompanyInvestor[] };
+
 export const inr = (v: string | number | null): string => {
   if (v === null || v === undefined || v === "") return "—";
   const n = typeof v === "string" ? parseFloat(v) : v;

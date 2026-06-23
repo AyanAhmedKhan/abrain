@@ -20,6 +20,7 @@ The keeper is the most-connected node (tie-break: has a scraped profile).
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 
@@ -219,41 +220,79 @@ def person_clusters(conn, explain=False):
     return (safe, reasons) if explain else safe
 
 
+# investor-name normalisation: strip extra org/geo words on top of _norm_co so
+# "Accel India Management" / "Accel" and "Titan Capital" / "Titan" collapse.
+_INV_EXTRA = re.compile(r"\b(management|asia|advisory|advisors?|investments?|the)\b", re.I)
+
+
+def _inv_core(name: str) -> str:
+    return _INV_EXTRA.sub(" ", _norm_co(name)).replace(" ", "")
+
+
+def investor_clusters(conn):
+    """Conservative investor dedup: merge only when the normalized cores are
+    EQUAL (firm name variants). Bare-token angels stay distinct (ambiguous)."""
+    rows = conn.execute(
+        "select id, canonical, (select count(*) from gb_edge where src=gb_entity.id and rel='invests_in') deg "
+        "from gb_entity where type='investor'").fetchall()
+    parent = {r["id"]: r["id"] for r in rows}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+
+    by_core: dict[str, list] = {}
+    for r in rows:
+        core = _inv_core(r["canonical"])
+        if len(core) >= 3:
+            by_core.setdefault(core, []).append(r["id"])
+    for grp in by_core.values():
+        for x in grp[1:]:
+            parent[find(x)] = find(grp[0])
+    clusters: dict = {}
+    for r in rows:
+        clusters.setdefault(find(r["id"]), []).append({"id": r["id"], "canonical": r["canonical"]})
+    return [v for v in clusters.values() if len(v) > 1]
+
+
 # ── merge ────────────────────────────────────────────────────
 
 def _merge(conn, keeper, loser, kind):
     k, l = keeper["id"], loser["id"]
-    # gb_edge: repoint src then dst, guarding the (src,rel,dst) unique constraint
-    conn.execute("""update gb_edge e set src=%s where src=%s
-        and not exists (select 1 from gb_edge x where x.src=%s and x.rel=e.rel and x.dst=e.dst)""", (k, l, k))
-    conn.execute("delete from gb_edge where src=%s", (l,))
-    conn.execute("""update gb_edge e set dst=%s where dst=%s
-        and not exists (select 1 from gb_edge x where x.src=e.src and x.rel=e.rel and x.dst=%s)""", (k, l, k))
-    conn.execute("delete from gb_edge where dst=%s", (l,))
-    conn.execute("delete from gb_edge where src=dst")  # any self-loops created
-    # other FKs
-    conn.execute("update gb_observation set entity_id=%s where entity_id=%s", (k, l))
-    conn.execute("update gb_task set company_id=%s where company_id=%s", (k, l))
-    conn.execute("update gb_task set deal_id=%s where deal_id=%s", (k, l))
-    # profile row: move to keeper only if keeper has none (else keeper's wins)
-    if not _has_profile(conn, k, kind):
-        tbl = "gb_company_profile" if kind == "company" else "gb_person_profile"
-        col = "company_id" if kind == "company" else "person_id"
-        conn.execute(f"update {tbl} set {col}=%s where {col}=%s", (k, l))
-    # fold attrs (keeper wins) + union aliases incl. loser canonical
-    ka = conn.execute("select canonical, attrs, keys from gb_entity where id=%s", (k,)).fetchone()
-    la = conn.execute("select canonical, attrs, keys from gb_entity where id=%s", (l,)).fetchone()
-    merged = {**(la["attrs"] or {}), **(ka["attrs"] or {})}
-    aliases = list(dict.fromkeys(
-        (list((ka["attrs"] or {}).get("aliases") or []))
-        + list((la["attrs"] or {}).get("aliases") or [])
-        + [la["canonical"]]))
-    merged["aliases"] = [a for a in aliases if a and a.lower() != (ka["canonical"] or "").lower()]
-    merged_keys = {**(la["keys"] or {}), **(ka["keys"] or {})}
-    import json
-    conn.execute("update gb_entity set attrs=%s::jsonb, keys=%s::jsonb where id=%s",
-                 (json.dumps(merged), json.dumps(merged_keys), k))
-    conn.execute("delete from gb_entity where id=%s", (l,))
+    # atomic per merge — under autocommit, a mid-merge failure must not leave a
+    # half-repointed graph (orphan edges / undeleted loser).
+    with conn.transaction():
+        # gb_edge: repoint src then dst, guarding the (src,rel,dst) unique constraint
+        conn.execute("""update gb_edge e set src=%s where src=%s
+            and not exists (select 1 from gb_edge x where x.src=%s and x.rel=e.rel and x.dst=e.dst)""", (k, l, k))
+        conn.execute("delete from gb_edge where src=%s", (l,))
+        conn.execute("""update gb_edge e set dst=%s where dst=%s
+            and not exists (select 1 from gb_edge x where x.src=e.src and x.rel=e.rel and x.dst=%s)""", (k, l, k))
+        conn.execute("delete from gb_edge where dst=%s", (l,))
+        conn.execute("delete from gb_edge where src=dst")  # any self-loops created
+        # other FKs
+        conn.execute("update gb_observation set entity_id=%s where entity_id=%s", (k, l))
+        conn.execute("update gb_task set company_id=%s where company_id=%s", (k, l))
+        conn.execute("update gb_task set deal_id=%s where deal_id=%s", (k, l))
+        # profile row: move to keeper only if keeper has none (investors have none)
+        if kind in ("company", "person") and not _has_profile(conn, k, kind):
+            tbl = "gb_company_profile" if kind == "company" else "gb_person_profile"
+            col = "company_id" if kind == "company" else "person_id"
+            conn.execute(f"update {tbl} set {col}=%s where {col}=%s", (k, l))
+        # fold attrs (keeper wins) + union aliases incl. loser canonical
+        ka = conn.execute("select canonical, attrs, keys from gb_entity where id=%s", (k,)).fetchone()
+        la = conn.execute("select canonical, attrs, keys from gb_entity where id=%s", (l,)).fetchone()
+        merged = {**(la["attrs"] or {}), **(ka["attrs"] or {})}
+        aliases = list(dict.fromkeys(
+            (list((ka["attrs"] or {}).get("aliases") or []))
+            + list((la["attrs"] or {}).get("aliases") or [])
+            + [la["canonical"]]))
+        merged["aliases"] = [a for a in aliases if a and a.lower() != (ka["canonical"] or "").lower()]
+        merged_keys = {**(la["keys"] or {}), **(ka["keys"] or {})}
+        conn.execute("update gb_entity set attrs=%s::jsonb, keys=%s::jsonb where id=%s",
+                     (json.dumps(merged), json.dumps(merged_keys), k))
+        conn.execute("delete from gb_entity where id=%s", (l,))
 
 
 def _pick_keeper(conn, members, kind):
@@ -299,6 +338,17 @@ def run(apply: bool):
         print(f"\n=== NOT merged — kept distinct ({len(skips)}) ===")
         for a, b, w in skips:
             print(f"  {a!r} ≠ {b!r}  [{w}]")
+
+    ic = investor_clusters(conn)
+    print(f"\n=== investor clusters (same firm core): {len(ic)} ===")
+    for members in ic:
+        # keep the cleanest brand name (shortest) — all edges union onto it anyway
+        keeper = min(members, key=lambda m: (len(m["canonical"] or ""), m["canonical"] or ""))
+        for l in [m for m in members if m["id"] != keeper["id"]]:
+            print(f"  KEEP {keeper['canonical']!r}  ← {l['canonical']!r}")
+            if apply:
+                _merge(conn, keeper, l, "investor")
+            total += 1
 
     print(f"\n{'APPLIED' if apply else 'DRY-RUN'} · {total} merges"
           + ("" if apply else " (run with --apply to execute)"))

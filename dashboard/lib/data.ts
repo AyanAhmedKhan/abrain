@@ -1,7 +1,8 @@
 import { q } from "./db";
 import type {
   Company, Stats, EmailRow, Person, PersonFull, CompanyProfile, OrgPerson,
-  PipelineDeal, FinPoint, Inbox, Task,
+  PipelineDeal, FinPoint, Inbox, Task, InvestorRow, CompanyInvestor, Bridge, IntroPaths,
+  InvestorPortfolioRow, CoInvestor,
 } from "./types";
 import { PIPELINE_STAGES } from "./types";
 
@@ -56,6 +57,62 @@ export const getCompanyEmails = (name: string) =>
     [name],
   ), [], "getCompanyEmails");
 
+// ── investors & co-investment ────────────────────────────────
+export const getInvestors = () =>
+  safe(q<InvestorRow>(
+    `select s.investor, s.investor_id, s.portfolio,
+            (select string_agg(distinct cc.sector, ', ') from gb_investor_portfolio p
+               join gb_company_card cc on cc.company = p.company
+              where p.investor_id = s.investor_id and cc.sector is not null) as sectors,
+            (select array_agg(p.company order by p.company) from gb_investor_portfolio p
+              where p.investor_id = s.investor_id) as companies
+       from gb_investor_stats s
+      order by s.portfolio desc, s.investor`), [], "getInvestors");
+
+// one investor's portfolio (companies we've seen them in) + co-investors
+export const getInvestorPortfolio = (name: string) =>
+  safe(q<InvestorPortfolioRow>(
+    `select p.company, cc.sector, cc.stage, cc.ask_inr_cr, cc.last_interaction
+       from gb_investor_portfolio p left join gb_company_card cc on cc.company = p.company
+      where p.investor = $1
+      order by cc.last_interaction desc nulls last, p.company`, [name]), [], "getInvestorPortfolio");
+
+export const getCoinvestors = (name: string) =>
+  safe(q<CoInvestor>(
+    `select case when investor_a = $1 then investor_b else investor_a end as investor, shared
+       from gb_coinvestors where investor_a = $1 or investor_b = $1
+      order by shared desc, investor limit 40`, [name]), [], "getCoinvestors");
+
+// investors of one company + how many other deals each is in
+export const getCompanyInvestors = (name: string) =>
+  safe(q<CompanyInvestor>(
+    `select ci.investor, ci.investor_id, st.portfolio
+       from gb_investor_portfolio ci join gb_investor_stats st on st.investor_id = ci.investor_id
+      where ci.company = $1 order by st.portfolio desc, ci.investor`, [name]), [], "getCompanyInvestors");
+
+// warm-intro paths to a company: referrer, alumni bridges, and its investors.
+export const getIntroPaths = async (name: string, referred_by: string | null): Promise<IntroPaths> => {
+  const [bridges, investors] = await Promise.all([
+    safe(q<Bridge>(
+      `select distinct conn.canonical as connector, conn.id as connector_id,
+              bridge.canonical as via_company, px.canonical as person,
+              exists(select 1 from gb_edge de join gb_entity dd on dd.id = de.dst
+                      where de.src = conn.id and de.rel='works_at' and dd.canonical='Dexter Capital') as is_dexter
+         from gb_edge ex
+         join gb_entity tgt on tgt.id = ex.dst and tgt.type='company' and tgt.canonical = $1
+         join gb_entity px on px.id = ex.src and px.type='person'
+         join gb_edge eb on eb.src = px.id and eb.rel='works_at' and eb.dst <> ex.dst
+         join gb_entity bridge on bridge.id = eb.dst and bridge.type='company'
+         join gb_edge ec on ec.dst = eb.dst and ec.rel='works_at' and ec.src <> px.id
+         join gb_entity conn on conn.id = ec.src and conn.type='person'
+        where ex.rel='works_at'
+          and not exists(select 1 from gb_edge xx where xx.src=conn.id and xx.rel='works_at' and xx.dst=tgt.id)
+        order by is_dexter desc, connector limit 15`, [name]), [], "introBridges"),
+    getCompanyInvestors(name),
+  ]);
+  return { referred_by, bridges, investors };
+};
+
 // ── pipeline (Kanban) ────────────────────────────────────────
 export const getPipeline = () =>
   safe(q<PipelineDeal>(
@@ -68,14 +125,14 @@ export const getPipeline = () =>
 export async function setDealStage(entityId: string, stage: string): Promise<boolean> {
   if (!(PIPELINE_STAGES as readonly string[]).includes(stage)) return false;
   try {
-    await q("update gb_entity set attrs = attrs || jsonb_build_object('pipeline_stage', $1::text) where id = $2 and type='company'", [stage, entityId]);
+    await q("update gb_entity set attrs = coalesce(attrs,'{}'::jsonb) || jsonb_build_object('pipeline_stage', $1::text) where id = $2 and type='company'", [stage, entityId]);
     return true;
   } catch (e) { console.error("[data] setDealStage", e); return false; }
 }
 
 export async function setDealOwner(entityId: string, owner: string): Promise<boolean> {
   try {
-    await q("update gb_entity set attrs = attrs || jsonb_build_object('deal_owner', $1::text) where id = $2 and type='company'", [owner, entityId]);
+    await q("update gb_entity set attrs = coalesce(attrs,'{}'::jsonb) || jsonb_build_object('deal_owner', $1::text) where id = $2 and type='company'", [owner, entityId]);
     return true;
   } catch (e) { console.error("[data] setDealOwner", e); return false; }
 }
