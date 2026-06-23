@@ -73,6 +73,7 @@ export type PersonFull = {
 export type OrgPerson = {
   person: string; entity_id: string; role: string | null; headline: string | null;
   linkedin: string | null; photo_url: string | null; has_profile: boolean;
+  current?: boolean; tenure?: string | null;
 };
 
 export type CompanyProfile = {

@@ -268,14 +268,28 @@ def store_profile(conn, j: dict, person_id=None) -> str:
     # harvest each company's LinkedIn URL FOR FREE from the experience entry and
     # enqueue a full company scrape on first discovery (most-optimized path —
     # no extra search/credit; gb_q_company dedups via attrs.company_scraped).
+    # Rebuild this person's LinkedIn works_at edges idempotently (delete our prior
+    # ones — env-less — then re-insert; pipeline edges with an envelope_id are left
+    # alone). Experience is ordered most-recent-first, so the first match per
+    # company is the latest stint and decides current/past.
+    conn.execute("delete from gb_edge where src=%s and rel='works_at' and envelope_id is null", (pid,))
     edges, seen = 0, set()
     for e in p["experience"]:
         comp_id = _match_company(conn, e.get("companyName"))
         if comp_id and comp_id not in seen:
             seen.add(comp_id)
+            end = (e.get("end") or "").strip().lower()
+            props = {
+                "current": end in ("", "present"),
+                "title": e.get("position"),
+                "start": e.get("start"), "end": e.get("end"),
+                "company_name": e.get("companyName"),
+                "company_linkedin": _company_url(e),
+                "company_public_id": e.get("companyUniversalName"),
+            }
             conn.execute(
-                "insert into gb_edge (src, rel, dst) values (%s,'works_at',%s) on conflict do nothing",
-                (pid, comp_id))
+                "insert into gb_edge (src, rel, dst, props) values (%s,'works_at',%s,%s::jsonb)",
+                (pid, comp_id, json.dumps({k: v for k, v in props.items() if v not in (None, "")})))
             edges += 1
             _attach_company_url(conn, comp_id, _company_url(e), e.get("companyLogo"))
     return f"{p['name']} ({len(p['experience'])} jobs, {len(p['skills'])} skills, {edges} edges)"
@@ -486,6 +500,18 @@ def import_path(conn, path) -> int:
     return n
 
 
+def relink(conn) -> int:
+    """Rebuild graph edges + entity quick-fields from already-stored raw profiles
+    (no Apify calls). Use after schema/logic changes — e.g. to populate works_at
+    edge props (current/past, role, tenure) for profiles scraped earlier."""
+    n = 0
+    for r in conn.execute("select raw from gb_person_profile where raw is not null").fetchall():
+        raw = r["raw"] if isinstance(r["raw"], dict) else json.loads(r["raw"])
+        print(f"[profile] relink {store_profile(conn, raw)}", flush=True)
+        n += 1
+    return n
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "worker"
     conn = connect()
@@ -493,6 +519,8 @@ def main():
         run(once="--once" in sys.argv)
     elif cmd == "import":
         print(f"[profile] imported {import_path(conn, sys.argv[2])} profiles", flush=True)
+    elif cmd == "relink":
+        print(f"[profile] relinked {relink(conn)} profiles", flush=True)
     elif cmd == "scrape":
         for item in apify_fetch([sys.argv[2]]):
             print(f"[profile] {store_profile(conn, item)}", flush=True)

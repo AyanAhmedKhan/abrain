@@ -156,10 +156,12 @@ export default async function Page({ params }: { params: { id: string } }) {
         </SectionCard>
       )}
 
-      {colleagues.length > 0 && (
-        <SectionCard title={`Colleagues (${colleagues.length})`}>
+      {colleagues.length > 0 && (() => {
+        const cur = colleagues.filter((co) => co.current !== false);
+        const past = colleagues.filter((co) => co.current === false);
+        const grid = (list: typeof colleagues) => (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {colleagues.map((co) => (
+            {list.map((co) => (
               <div key={co.entity_id} className="flex items-center gap-3 border border-line rounded-xl p-2.5 transition-colors hover:border-accent/40 hover:bg-wash">
                 <Avatar src={co.photo_url} name={co.person} size={36} />
                 <div className="min-w-0 flex-1">
@@ -176,8 +178,14 @@ export default async function Page({ params }: { params: { id: string } }) {
               </div>
             ))}
           </div>
-        </SectionCard>
-      )}
+        );
+        return (
+          <>
+            {cur.length > 0 && <SectionCard title={`Current colleagues (${cur.length})`}>{grid(cur)}</SectionCard>}
+            {past.length > 0 && <SectionCard title={`Former colleagues (${past.length})`}>{grid(past)}</SectionCard>}
+          </>
+        );
+      })()}
 
       {p.scraped_at && <p className="text-dim text-xs">Profile scraped {String(p.scraped_at).slice(0, 10)} · LinkedIn via Apify</p>}
     </div>

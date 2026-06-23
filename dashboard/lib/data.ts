@@ -74,12 +74,15 @@ export const getPersonCompanies = (id: string) =>
 // colleagues: people who share a works_at company with this person (graph join).
 export const getColleagues = (id: string) =>
   safe(q<OrgPerson & { company: string }>(
-    `select distinct e.canonical as person, e.id as entity_id,
-            coalesce(p.current_title, e.attrs->>'role') as role,
-            e.attrs->>'headline' as headline,
-            coalesce(p.linkedin_url, e.attrs->>'linkedin') as linkedin,
-            p.photo_url, (p.person_id is not null) as has_profile,
-            d.canonical as company
+    `select e.canonical as person, e.id as entity_id,
+            max(coalesce(other.props->>'title', p.current_title, e.attrs->>'role')) as role,
+            max(e.attrs->>'headline') as headline,
+            max(coalesce(p.linkedin_url, e.attrs->>'linkedin')) as linkedin,
+            max(p.photo_url) as photo_url,
+            bool_or(p.person_id is not null) as has_profile,
+            bool_or(coalesce((me.props->>'current')::bool, true)
+                    and coalesce((other.props->>'current')::bool, true)) as current,
+            max(d.canonical) as company
        from gb_edge me
        join gb_edge other on other.dst = me.dst and other.rel = 'works_at'
        join gb_entity d on d.id = me.dst and d.type = 'company'
@@ -87,7 +90,8 @@ export const getColleagues = (id: string) =>
        left join gb_person_profile p on p.person_id = e.id
       where me.src = $1 and me.rel = 'works_at' and other.src <> $1
         and ${NOT_PLACEHOLDER}
-      order by has_profile desc, person limit 60`, [id]
+      group by e.id, e.canonical
+      order by current desc, has_profile desc, person limit 60`, [id]
   ), [], "getColleagues");
 
 // people who work at this org (LinkedIn works_at edges). Cluster-aware: also
@@ -106,15 +110,19 @@ export const getCompanyPeople = (name: string) =>
           or (nullif(e.attrs->>'website','') is not null and e.attrs->>'website' = t.attrs->>'website')
         )
      )
-     select distinct e.canonical as person, e.id as entity_id,
-            coalesce(p.current_title, e.attrs->>'role') as role,
-            e.attrs->>'headline' as headline,
-            coalesce(p.linkedin_url, e.attrs->>'linkedin') as linkedin,
-            p.photo_url, (p.person_id is not null) as has_profile
+     select e.canonical as person, e.id as entity_id,
+            max(coalesce(ed.props->>'title', p.current_title, e.attrs->>'role')) as role,
+            max(e.attrs->>'headline') as headline,
+            max(coalesce(p.linkedin_url, e.attrs->>'linkedin')) as linkedin,
+            max(p.photo_url) as photo_url,
+            bool_or(p.person_id is not null) as has_profile,
+            bool_or(coalesce((ed.props->>'current')::bool, true)) as current,
+            max(nullif(concat_ws(' – ', ed.props->>'start', ed.props->>'end'), '')) as tenure
        from gb_edge ed
        join cluster cl on cl.id = ed.dst
        join gb_entity e on e.id = ed.src and e.type='person'
        left join gb_person_profile p on p.person_id = e.id
       where ed.rel = 'works_at' and ${NOT_PLACEHOLDER}
-      order by has_profile desc, person`, [name]
+      group by e.id, e.canonical
+      order by current desc, has_profile desc, person`, [name]
   ), [], "getCompanyPeople");

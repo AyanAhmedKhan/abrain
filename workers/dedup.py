@@ -94,27 +94,118 @@ def company_clusters(conn):
     return [v for v in clusters.values() if len(v) > 1]
 
 
-def person_clusters(conn):
-    """Stub (no edges) whose name is an exact prefix of a profiled person's full
-    name → merge into the profiled node. Plus same /in/ slug across nodes."""
-    prof = conn.execute(
-        "select e.id, e.canonical from gb_entity e join gb_person_profile p on p.person_id=e.id"
-    ).fetchall()
-    out = []
-    for pr in prof:
-        full = (pr["canonical"] or "").strip()
-        if not full:
-            continue
-        stubs = conn.execute(
-            """select e.id, e.canonical from gb_entity e
-               where e.type='person' and e.id<>%s
-                 and lower(%s) like lower(e.canonical) || ' %%'
-                 and (select count(*) from gb_edge where src=e.id or dst=e.id)=0
-                 and not exists (select 1 from gb_person_profile p where p.person_id=e.id)""",
-            (pr["id"], full)).fetchall()
-        if stubs:
-            out.append([pr] + list(stubs))   # keeper first
-    return out
+def _li_slug(attrs, keys):
+    """LinkedIn identity key for a person (subdomain/case/query independent)."""
+    a, k = attrs or {}, keys or {}
+    v = k.get("linkedin") or a.get("public_id") or a.get("linkedin") or ""
+    m = re.search(r"/in/([^/?#]+)", v)
+    s = (m.group(1) if m else v).strip("/").lower()
+    return re.sub(r"[^a-z0-9]", "", s) or None
+
+
+def _ptoks(name):
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z ]", " ", (name or "").lower())).strip().split()
+
+
+def _person_signals(conn):
+    """Per-person identity signals for resolution: LinkedIn slug, email, phone,
+    companies worked at (works_at dst + attrs.company), and email threads
+    (envelope_ids on their edges)."""
+    sig = {}
+    for r in conn.execute("select id, canonical, attrs, keys from gb_entity where type='person'").fetchall():
+        a, k = r["attrs"] or {}, r["keys"] or {}
+        comps = {_norm_co(a.get("company"))} if a.get("company") else set()
+        threads = set()
+        for e in conn.execute("select dst, rel, envelope_id from gb_edge where src=%s", (r["id"],)).fetchall():
+            if e["rel"] == "works_at":
+                comps.add(e["dst"])           # company entity id
+            if e["envelope_id"]:
+                threads.add(e["envelope_id"])
+        sig[r["id"]] = {
+            "id": r["id"], "name": r["canonical"], "toks": _ptoks(r["canonical"]),
+            "li": _li_slug(a, k),
+            "email": (k.get("email") or "").strip().lower() or None,
+            "phone": re.sub(r"\D", "", k.get("phone") or "") or None,
+            "comps": {c for c in comps if c}, "threads": threads,
+            "has_profile": _has_profile(conn, r["id"], "person"),
+            "deg": _deg(conn, r["id"]),
+        }
+    return sig
+
+
+def _same_person(a, b):
+    """Verify two person records are the same identity. Returns (merge, reason).
+    HARD VETO on any conflicting strong key (different LinkedIn / email / phone) —
+    a shorter name is NOT assumed to be the longer one (e.g. 'Amit' = Amit Mehta,
+    not Amit Chawla). Positive: same LinkedIn / email / phone (decisive); or a
+    contentless name-prefix stub corroborated by a shared company AND thread."""
+    if a["li"] and b["li"] and a["li"] != b["li"]:
+        return False, "different LinkedIn"
+    if a["email"] and b["email"] and a["email"] != b["email"]:
+        return False, "different email"
+    if a["phone"] and b["phone"] and a["phone"] != b["phone"]:
+        return False, "different phone"
+    if a["li"] and a["li"] == b["li"]:
+        return True, "same LinkedIn"
+    if a["email"] and a["email"] == b["email"]:
+        return True, "same email"
+    if a["phone"] and a["phone"] == b["phone"]:
+        return True, "same phone"
+    # name-prefix stub: one is a contentless prefix of the other (no own identity
+    # key), corroborated by BOTH a shared company AND a shared email thread.
+    ta, tb = a["toks"], b["toks"]
+    short, long_ = (a, b) if len(ta) <= len(tb) else (b, a)
+    ts, tl = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    if ts and len(ts) < len(tl) and tl[:len(ts)] == ts and not short["li"] and not short["email"]:
+        shared_co = bool(short["comps"] & long_["comps"])
+        shared_thr = bool(short["threads"] & long_["threads"])
+        if shared_co and shared_thr:
+            return True, "name-prefix + shared company + shared thread"
+        if shared_co and short["deg"] == 0:
+            return True, "name-prefix stub + shared company"
+    return False, "unverified (name only)"
+
+
+def person_clusters(conn, explain=False):
+    """Identity-verified person duplicates via union-find over verified pairs."""
+    sig = _person_signals(conn)
+    ids = list(sig)
+    parent = {i: i for i in ids}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+
+    reasons = []
+    # candidate pairs: same LinkedIn / email / phone, or name-compatible
+    for i, ai in enumerate(ids):
+        a = sig[ai]
+        for bi in ids[i + 1:]:
+            b = sig[bi]
+            ta, tb = a["toks"], b["toks"]
+            name_compat = ta and tb and (ta == tb or ta[:len(tb)] == tb or tb[:len(ta)] == ta)
+            if not (name_compat or (a["li"] and a["li"] == b["li"])
+                    or (a["email"] and a["email"] == b["email"])):
+                continue
+            ok, why = _same_person(a, b)
+            if ok:
+                parent[find(ai)] = find(bi)
+                reasons.append((a["name"], b["name"], why))
+            elif explain and name_compat:
+                reasons.append((a["name"], b["name"], "SKIP: " + why))
+    clusters = {}
+    for i in ids:
+        clusters.setdefault(find(i), []).append(
+            {"id": sig[i]["id"], "canonical": sig[i]["name"]})
+    out = [v for v in clusters.values() if len(v) > 1]
+    # never merge a cluster that ended up with ≥2 distinct LinkedIn slugs
+    safe = []
+    for cl in out:
+        slugs = {sig[m["id"]]["li"] for m in cl if sig[m["id"]]["li"]}
+        if len(slugs) <= 1:
+            safe.append(cl)
+    return (safe, reasons) if explain else safe
 
 
 # ── merge ────────────────────────────────────────────────────
@@ -158,23 +249,46 @@ def _pick_keeper(conn, members, kind):
     return max(members, key=lambda r: (_deg(conn, r["id"]), _has_profile(conn, r["id"], kind)))
 
 
+def _person_keeper(conn, members):
+    # prefer a scraped profile, then the fuller name, then most-connected
+    return max(members, key=lambda m: (
+        _has_profile(conn, m["id"], "person"),
+        len((m["canonical"] or "").split()),
+        _deg(conn, m["id"])))
+
+
 def run(apply: bool):
     conn = connect()
     total = 0
-    for kind, clusters in (("company", company_clusters(conn)), ("person", person_clusters(conn))):
-        print(f"\n=== {kind} clusters: {len(clusters)} ===")
-        for members in clusters:
-            if kind == "person":
-                keeper, losers = members[0], members[1:]   # keeper = profiled node
-            else:
-                keeper = _pick_keeper(conn, members, kind)
-                losers = [m for m in members if m["id"] != keeper["id"]]
-            print(f"  KEEP {keeper['canonical']!r} (deg {_deg(conn, keeper['id'])})")
-            for l in losers:
-                print(f"    ← merge {l['canonical']!r} (deg {_deg(conn, l['id'])})")
-                if apply:
-                    _merge(conn, keeper, l, kind)
-                total += 1
+
+    cc = company_clusters(conn)
+    print(f"\n=== company clusters: {len(cc)} ===")
+    for members in cc:
+        keeper = _pick_keeper(conn, members, "company")
+        for l in [m for m in members if m["id"] != keeper["id"]]:
+            print(f"  KEEP {keeper['canonical']!r}  ← {l['canonical']!r}")
+            if apply:
+                _merge(conn, keeper, l, "company")
+            total += 1
+
+    pc, reasons = person_clusters(conn, explain=True)
+    print(f"\n=== person clusters (identity-verified): {len(pc)} ===")
+    for members in pc:
+        keeper = _person_keeper(conn, members)
+        for l in [m for m in members if m["id"] != keeper["id"]]:
+            why = next((w for n1, n2, w in reasons
+                        if {n1, n2} == {keeper["canonical"], l["canonical"]}), "")
+            print(f"  KEEP {keeper['canonical']!r}  ← {l['canonical']!r}  [{why}]")
+            if apply:
+                _merge(conn, keeper, l, "person")
+            total += 1
+
+    skips = [(a, b, w[6:]) for a, b, w in reasons if w.startswith("SKIP")]
+    if skips:
+        print(f"\n=== NOT merged — kept distinct ({len(skips)}) ===")
+        for a, b, w in skips:
+            print(f"  {a!r} ≠ {b!r}  [{w}]")
+
     print(f"\n{'APPLIED' if apply else 'DRY-RUN'} · {total} merges"
           + ("" if apply else " (run with --apply to execute)"))
 

@@ -94,11 +94,12 @@ export default async function Page({ params }: { params: { name: string } }) {
         <Field label="Last interaction">{c.last_interaction ? String(c.last_interaction).slice(0, 10) : "—"}</Field>
       </div>
 
-      {orgPeople.length > 0 && (
-        <section className="card p-5">
-          <h2 className="section-title mb-3">People at this company <span className="text-dim font-normal">({orgPeople.length})</span></h2>
+      {(() => {
+        const current = orgPeople.filter((op) => op.current !== false);
+        const past = orgPeople.filter((op) => op.current === false);
+        const grid = (list: typeof orgPeople) => (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {orgPeople.map((op) => (
+            {list.map((op) => (
               <div key={op.entity_id} className="flex items-center gap-3 border border-line rounded-xl p-2.5 transition-colors hover:border-accent/40 hover:bg-wash">
                 <Avatar src={op.photo_url} name={op.person} size={36} />
                 <div className="min-w-0 flex-1">
@@ -107,14 +108,32 @@ export default async function Page({ params }: { params: { name: string } }) {
                       ? <Link href={`/people/${op.entity_id}`} className="text-accent hover:underline">{op.person}</Link>
                       : op.person}
                   </div>
-                  <div className="text-dim text-xs truncate" title={op.headline ?? op.role ?? ""}>{op.headline ?? op.role ?? ""}</div>
+                  <div className="text-dim text-xs truncate" title={op.headline ?? op.role ?? ""}>
+                    {op.role ?? op.headline ?? ""}{op.tenure ? <span className="opacity-70"> · {op.tenure}</span> : null}
+                  </div>
                 </div>
                 {op.linkedin && <a href={op.linkedin} target="_blank" rel="noreferrer" className="text-accent hover:underline text-xs shrink-0">in ↗</a>}
               </div>
             ))}
           </div>
-        </section>
-      )}
+        );
+        return (
+          <>
+            {current.length > 0 && (
+              <section className="card p-5">
+                <h2 className="section-title mb-3">Current team <span className="text-dim font-normal">({current.length})</span></h2>
+                {grid(current)}
+              </section>
+            )}
+            {past.length > 0 && (
+              <section className="card p-5">
+                <h2 className="section-title mb-3">Past employees <span className="text-dim font-normal">({past.length})</span></h2>
+                {grid(past)}
+              </section>
+            )}
+          </>
+        );
+      })()}
 
       {c.summary && <section className="card p-5"><h2 className="section-title mb-2">About</h2><p className="text-[15px] leading-relaxed">{c.summary}</p></section>}
       {c.business_model && <section className="card p-5"><h2 className="section-title mb-2">Business model</h2><p className="text-[15px] leading-relaxed">{c.business_model}</p></section>}

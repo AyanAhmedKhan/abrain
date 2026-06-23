@@ -327,20 +327,28 @@ def build_model(conn):
         c["hq"] = c.get("hq") or r["hq"]
         c["website"] = c.get("website") or r["website"]
 
-    # interlink: people linked to each company via a works_at edge (LinkedIn).
-    # Feeds the company note's Team section + people frontmatter (backlinks/graph).
+    # interlink: people linked to each company via a works_at edge (LinkedIn),
+    # split into current vs past from the edge props. Feeds the company note's
+    # Team / Past-employees sections + people frontmatter (backlinks/graph).
+    team_map = {}  # company → {person: current_bool}  (current wins on dupes)
     for r in conn.execute(
-        """select s.canonical as person, d.canonical as company
+        """select s.canonical as person, d.canonical as company,
+                  coalesce((ed.props->>'current')::bool, true) as current
              from gb_edge ed
              join gb_entity s on s.id = ed.src and s.type='person'
              join gb_entity d on d.id = ed.dst and d.type='company'
             where ed.rel = 'works_at'"""
     ).fetchall():
-        c = companies.get(r["company"])
-        if c is not None and _is_person_name(r["person"]):   # drop placeholder entities
-            c.setdefault("team", [])
-            if r["person"] not in c["team"]:
-                c["team"].append(r["person"])
+        if not _is_person_name(r["person"]):   # drop placeholder entities
+            continue
+        m = team_map.setdefault(r["company"], {})
+        m[r["person"]] = m.get(r["person"], False) or r["current"]
+    for company, m in team_map.items():
+        c = companies.get(company)
+        if c is None:
+            continue
+        c["team_current"] = sorted(p for p, cur in m.items() if cur)
+        c["team_past"] = sorted(p for p, cur in m.items() if not cur)
 
     # reverse-aggregation: who referred which deals → investor: [companies]
     referred = defaultdict(list)
@@ -380,9 +388,9 @@ def render_company(c, obs, referred, ref_names=frozenset()):
     type_links = [f"[[Categories/{safe_name(type_cat)}]]"] if type_cat else cats
     stage = canon_stage(c["stage"])
     aliases = list(dict.fromkeys((c["aliases"] or []) + make_aliases(name)))
-    team = [n for n in c.get("team", []) if n not in c["founders"] and n not in c["dexter"]]
+    team_all = c.get("team_current", []) + c.get("team_past", [])
     people_links = list(dict.fromkeys(
-        [wl(n) for n in c["founders"]] + [wl(n) for n in sorted(c["dexter"])] + [wl(n) for n in team]))
+        [wl(n) for n in c["founders"]] + [wl(n) for n in sorted(c["dexter"])] + [wl(n) for n in team_all]))
     email_links = [wl(e, "Email") for e in c["emails"]]
     has_deal = c["ask"] is not None or bool(c["round_type"])
 
@@ -393,8 +401,10 @@ def render_company(c, obs, referred, ref_names=frozenset()):
            fm_scalar("hq", c["hq"]), fm_scalar("linkedin", c.get("linkedin")),
            fm_scalar("linkedin_id", c.get("li_public_id")),
            fm_scalar("industry", c.get("li_industry")),
+           fm_scalar("company_size", c.get("li_size")),
            fm_scalar("employees", c.get("li_employees")),
-           fm_scalar("followers", c.get("li_followers"))]
+           fm_scalar("followers", c.get("li_followers")),
+           fm_scalar("logo", c.get("logo"))]
     if not is_inv:
         fm += [
             fm_scalar("revenue_latest", cr(c["revenue"])),
@@ -441,9 +451,11 @@ def render_company(c, obs, referred, ref_names=frozenset()):
     if not c["founders"] and not c["dexter"]:
         body.append("| | | | | |")
     body.append("")
-    # Team (LinkedIn) — people linked to this org via a works_at edge
-    if team:
-        body += ["## Team (LinkedIn)", ""] + [f"- {wl(n)}" for n in team] + [""]
+    # Team — live current roster (Team.base = people whose org → this company) +
+    # an explicit Past-employees (alumni) list from past works_at edges.
+    body += ["## Team", "", "![[Team.base]]", ""]
+    if c.get("team_past"):
+        body += ["### Past employees", ""] + [f"- {wl(n)}" for n in c["team_past"]] + [""]
     # About / Business model
     body += ["## About", "", c["summary"] or "", "",
              "## Business Model", "", c["business_model"] or "", ""]
@@ -524,6 +536,12 @@ def _exp_line(e, comp_index=None):
     if comp_index and co:
         canon = comp_index.get(_norm_co(co))
         co = f"[[References/{safe_name(canon)}]]" if canon else co
+    # surface the company's own LinkedIn (incl. past employers) when present
+    li = e.get("companyLinkedinUrl") or (
+        f"https://www.linkedin.com/company/{e['companyUniversalName']}"
+        if e.get("companyUniversalName") else None)
+    if li:
+        co = f"{co} ([in]({li.split('?')[0].rstrip('/')}))"
     head = " — ".join(x for x in (e.get("position"), co) if x) or "(role)"
     when = " – ".join(x for x in (e.get("start"), e.get("end")) if x)
     meta = " · ".join(x for x in (when, e.get("duration"), e.get("employmentType"),
@@ -751,10 +769,146 @@ views:
 """
 
 
-def write_people_base(dest):
-    p = os.path.join(dest, "_templates", "Bases", "People.base")
-    if os.path.isdir(os.path.dirname(p)):
-        _write(p, PEOPLE_BASE)
+# Enhanced Companies base: surfaces the scraped LinkedIn company data (logo,
+# industry, size, employees, followers, URL) + a dedicated LinkedIn view.
+COMPANIES_BASE = """filters:
+  and:
+    - categories.contains(link("Companies"))
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Company
+  note.logo:
+    displayName: Logo
+  note.industry:
+    displayName: Industry
+  note.type:
+    displayName: Type
+  note.people:
+    displayName: People
+  note.employees:
+    displayName: Employees
+  note.followers:
+    displayName: Followers
+  note.company_size:
+    displayName: Size
+  note.linkedin:
+    displayName: LinkedIn
+  note.url:
+    displayName: URL
+  note.founded:
+    displayName: Founded
+  note.hq:
+    displayName: HQ
+  note.revenue_latest:
+    displayName: Revenue
+  note.has_deal:
+    displayName: Deal?
+  note.stage:
+    displayName: Stage
+  note.poc:
+    displayName: POC
+  note.fitment:
+    displayName: Fitment
+  note.last_interaction:
+    displayName: Last Interaction
+  note.last_context:
+    displayName: Context
+views:
+  - type: table
+    name: All Companies
+    order:
+      - file.name
+      - industry
+      - hq
+      - revenue_latest
+      - has_deal
+      - stage
+      - poc
+      - fitment
+      - last_interaction
+      - last_context
+    sort:
+      - property: file.name
+        direction: ASC
+  - type: table
+    name: LinkedIn
+    filters:
+      and:
+        - note.linkedin != ""
+    order:
+      - file.name
+      - logo
+      - industry
+      - company_size
+      - employees
+      - followers
+      - hq
+      - founded
+      - linkedin
+    sort:
+      - property: followers
+        direction: DESC
+  - type: table
+    name: Recent Activity
+    order:
+      - file.name
+      - industry
+      - last_interaction
+      - last_context
+    sort:
+      - property: last_interaction
+        direction: DESC
+"""
+
+# Team base: people who work at the embedding company (org → this). Embedded in
+# each company note for a live, interconnected roster with full profile fields.
+TEAM_BASE = """filters:
+  and:
+    - categories.contains(link("People"))
+    - list(org).contains(this)
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Name
+  note.headline:
+    displayName: Headline
+  note.current_title:
+    displayName: Role
+  note.location:
+    displayName: Location
+  note.followers:
+    displayName: Followers
+  note.linkedin:
+    displayName: LinkedIn
+  note.linkedin_id:
+    displayName: LinkedIn ID
+views:
+  - type: table
+    name: Team
+    order:
+      - file.name
+      - headline
+      - current_title
+      - location
+      - followers
+      - linkedin
+    sort:
+      - property: followers
+        direction: DESC
+"""
+
+
+def write_custom_bases(dest):
+    """Write our enhanced/relationship bases over the scaffolded copies so the
+    source template vault stays pristine. People + Companies surface full LinkedIn
+    profile data; Team interconnects a company → its people."""
+    bd = os.path.join(dest, "_templates", "Bases")
+    if not os.path.isdir(bd):
+        return
+    _write(os.path.join(bd, "People.base"), PEOPLE_BASE)
+    _write(os.path.join(bd, "Companies.base"), COMPANIES_BASE)
+    _write(os.path.join(bd, "Team.base"), TEAM_BASE)
 
 
 # non-sector MOC notes our notes link to but the exporter doesn't generate.
@@ -817,7 +971,7 @@ def build_vault(dest, conn):
     """Generate the whole vault under `dest`. One bad row never aborts the run."""
     _email_seen.clear()
     scaffold(dest)
-    write_people_base(dest)   # enrich the People base with LinkedIn/profile columns
+    write_custom_bases(dest)  # People + Companies (LinkedIn cols) + Team (interconnect)
     copy_category_mocs(dest)  # restore People/Companies/Deals + sector MOC notes
     companies, emails, people, obs, referred = build_model(conn)
     # normalized company-name → canonical note name, for wikilinking experience
