@@ -1,0 +1,17 @@
+# gbrain · "Ask the brain" RAG service (localhost; dashboard proxies to it).
+[Unit]
+Description=gbrain ask-the-brain RAG service
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.ask_server
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+[Install]
+WantedBy=multi-user.target

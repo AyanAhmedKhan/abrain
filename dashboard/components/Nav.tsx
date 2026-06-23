@@ -9,6 +9,7 @@ const tabs = [
   { href: "/deals", label: "Deals" },
   { href: "/people", label: "People" },
   { href: "/inbox", label: "Inbox" },
+  { href: "/ask", label: "Ask" },
 ];
 
 export default function Nav() {

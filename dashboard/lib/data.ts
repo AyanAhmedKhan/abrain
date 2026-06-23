@@ -80,6 +80,18 @@ export async function setDealOwner(entityId: string, owner: string): Promise<boo
   } catch (e) { console.error("[data] setDealOwner", e); return false; }
 }
 
+// owner autocomplete: previously-used owners ∪ people linked to Dexter Capital
+export const getOwnerSuggestions = () =>
+  safe(q<{ o: string }>(
+    `select distinct o from (
+        select attrs->>'deal_owner' as o from gb_entity where type='company' and attrs ? 'deal_owner'
+        union
+        select s.canonical from gb_edge ed
+          join gb_entity s on s.id=ed.src and s.type='person'
+          join gb_entity d on d.id=ed.dst and d.type='company'
+         where ed.rel='works_at' and d.canonical='Dexter Capital'
+      ) x where coalesce(o,'')<>'' order by o`).then((r) => r.map((x) => x.o)), [], "getOwnerSuggestions");
+
 // ── financial trends ─────────────────────────────────────────
 export const getCompanyFinancials = (name: string) =>
   safe(q<FinPoint>(
