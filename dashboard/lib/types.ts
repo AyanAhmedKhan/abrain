@@ -116,7 +116,7 @@ export type InvestorPortfolioRow = { company: string; sector: string | null; sta
 export type CoInvestor = { investor: string; shared: number };
 export type CompanyInvestor = { investor: string; investor_id: string; portfolio: number };
 export type Bridge = { connector: string; connector_id: string; via_company: string; person: string; is_dexter: boolean };
-export type IntroPaths = { referred_by: string | null; bridges: Bridge[]; investors: CompanyInvestor[] };
+export type IntroPaths = { referred_by: string | null; bridges: Bridge[]; classmates: Bridge[]; investors: CompanyInvestor[] };
 
 export const inr = (v: string | number | null): string => {
   if (v === null || v === undefined || v === "") return "—";

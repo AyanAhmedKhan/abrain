@@ -33,6 +33,7 @@ import time
 
 import httpx
 
+from workers import affiliations
 from workers.lib import queues
 from workers.lib.db import connect
 
@@ -41,7 +42,7 @@ from workers.lib.db import connect
 _CO_SUFFIX = re.compile(
     r"\b(advisors?|capital|ventures?|partners?|technolog(?:y|ies)|tech|limited|ltd|"
     r"pvt|private|inc|llp|llc|fund|funds|group|company|co|solutions|labs|systems|"
-    r"india|global|holdings?|enterprises?)\b", re.I)
+    r"india|global|holdings?|enterprises?|and|the)\b", re.I)   # 'and'/'the' → '&' variants match
 
 
 def _norm_co(s: str | None) -> str:
@@ -286,26 +287,57 @@ def store_profile(conn, j: dict, person_id=None) -> str:
     # alone). Experience is ordered most-recent-first, so the first match per
     # company is the latest stint and decides current/past.
     conn.execute("delete from gb_edge where src=%s and rel='works_at' and envelope_id is null", (pid,))
+    conn.execute("delete from gb_edge where src=%s and rel='studied_at' and envelope_id is null", (pid,))
     edges, seen = 0, set()
     for e in p["experience"]:
+        end = (e.get("end") or "").strip().lower()
+        props = {
+            "current": end in ("", "present"),
+            "title": e.get("position"),
+            "start": e.get("start"), "end": e.get("end"),
+            "company_name": e.get("companyName"),
+            "company_linkedin": _company_url(e),
+            "company_public_id": e.get("companyUniversalName"),
+        }
+        props = {k: v for k, v in props.items() if v not in (None, "")}
         comp_id = _match_company(conn, e.get("companyName"))
-        if comp_id and comp_id not in seen:
+        if comp_id:                                   # tracked deal company
+            if comp_id in seen:
+                continue
             seen.add(comp_id)
-            end = (e.get("end") or "").strip().lower()
-            props = {
-                "current": end in ("", "present"),
-                "title": e.get("position"),
-                "start": e.get("start"), "end": e.get("end"),
-                "company_name": e.get("companyName"),
-                "company_linkedin": _company_url(e),
-                "company_public_id": e.get("companyUniversalName"),
-            }
             conn.execute(
                 "insert into gb_edge (src, rel, dst, props) values (%s,'works_at',%s,%s::jsonb)",
-                (pid, comp_id, json.dumps({k: v for k, v in props.items() if v not in (None, "")})))
+                (pid, comp_id, json.dumps(props)))
             edges += 1
-            _attach_company_url(conn, comp_id, _company_url(e), e.get("companyLogo"))
-    return f"{p['name']} ({len(p['experience'])} jobs, {len(p['skills'])} skills, {edges} edges)"
+            _attach_company_url(conn, comp_id, _company_url(e), _logo_url(e.get("companyLogo")))
+        else:                                         # untracked employer → org node
+            org_id = affiliations.upsert_org(conn, e.get("companyName"))
+            if not org_id or org_id in seen:
+                continue
+            seen.add(org_id)
+            affiliations.add_works_at_org(conn, pid, org_id, props)
+            affiliations.attach_meta(conn, org_id, _company_url(e), _logo_url(e.get("companyLogo")),
+                                     e.get("companyUniversalName"))
+            edges += 1
+    schools = 0
+    for ed in p["education"]:
+        sid = affiliations.upsert_school(conn, ed.get("schoolName"))
+        if not sid or sid in seen:
+            continue
+        seen.add(sid)
+        affiliations.add_studied_at(conn, pid, sid, {
+            "degree": ed.get("degree"), "field": ed.get("fieldOfStudy"), "period": ed.get("period")})
+        affiliations.attach_meta(conn, sid, ed.get("schoolLinkedinUrl"))
+        schools += 1
+    return f"{p['name']} ({len(p['experience'])} jobs, {len(p['skills'])} skills, {edges} edges, {schools} schools)"
+
+
+def _logo_url(v) -> str | None:
+    """harvestapi experience `companyLogo` may be a string OR an object
+    {url, sizes:[…]} — normalise to a plain URL string."""
+    if isinstance(v, dict):
+        return v.get("url") or ((v.get("sizes") or [{}])[0].get("url"))
+    return v if isinstance(v, str) and v.strip() else None
 
 
 def _company_url(e: dict) -> str | None:

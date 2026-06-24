@@ -90,27 +90,42 @@ export const getCompanyInvestors = (name: string) =>
        from gb_investor_portfolio ci join gb_investor_stats st on st.investor_id = ci.investor_id
       where ci.company = $1 order by st.portfolio desc, ci.investor`, [name]), [], "getCompanyInvestors");
 
-// warm-intro paths to a company: referrer, alumni bridges, and its investors.
+// warm-intro paths to a company: referrer, shared-employer bridges (incl. past
+// employers/orgs), classmate (shared-school) bridges, and its investors.
+const _dexter = `exists(select 1 from gb_edge de join gb_entity dd on dd.id = de.dst
+        where de.src = conn.id and de.rel='works_at' and dd.canonical='Dexter Capital') as is_dexter`;
+
 export const getIntroPaths = async (name: string, referred_by: string | null): Promise<IntroPaths> => {
-  const [bridges, investors] = await Promise.all([
+  const [bridges, classmates, investors] = await Promise.all([
     safe(q<Bridge>(
       `select distinct conn.canonical as connector, conn.id as connector_id,
-              bridge.canonical as via_company, px.canonical as person,
-              exists(select 1 from gb_edge de join gb_entity dd on dd.id = de.dst
-                      where de.src = conn.id and de.rel='works_at' and dd.canonical='Dexter Capital') as is_dexter
+              bridge.canonical as via_company, px.canonical as person, ${_dexter}
          from gb_edge ex
          join gb_entity tgt on tgt.id = ex.dst and tgt.type='company' and tgt.canonical = $1
          join gb_entity px on px.id = ex.src and px.type='person'
          join gb_edge eb on eb.src = px.id and eb.rel='works_at' and eb.dst <> ex.dst
-         join gb_entity bridge on bridge.id = eb.dst and bridge.type='company'
+         join gb_entity bridge on bridge.id = eb.dst and bridge.type in ('company','org')
          join gb_edge ec on ec.dst = eb.dst and ec.rel='works_at' and ec.src <> px.id
          join gb_entity conn on conn.id = ec.src and conn.type='person'
         where ex.rel='works_at'
           and not exists(select 1 from gb_edge xx where xx.src=conn.id and xx.rel='works_at' and xx.dst=tgt.id)
         order by is_dexter desc, connector limit 15`, [name]), [], "introBridges"),
+    safe(q<Bridge>(
+      `select distinct conn.canonical as connector, conn.id as connector_id,
+              sch.canonical as via_company, px.canonical as person, ${_dexter}
+         from gb_edge ex
+         join gb_entity tgt on tgt.id = ex.dst and tgt.type='company' and tgt.canonical = $1
+         join gb_entity px on px.id = ex.src and px.type='person'
+         join gb_edge es on es.src = px.id and es.rel='studied_at'
+         join gb_entity sch on sch.id = es.dst and sch.type='school'
+         join gb_edge ec on ec.dst = es.dst and ec.rel='studied_at' and ec.src <> px.id
+         join gb_entity conn on conn.id = ec.src and conn.type='person'
+        where ex.rel='works_at'
+          and not exists(select 1 from gb_edge xx where xx.src=conn.id and xx.rel='works_at' and xx.dst=tgt.id)
+        order by is_dexter desc, connector limit 15`, [name]), [], "introClassmates"),
     getCompanyInvestors(name),
   ]);
-  return { referred_by, bridges, investors };
+  return { referred_by, bridges, classmates, investors };
 };
 
 // ── pipeline (Kanban) ────────────────────────────────────────

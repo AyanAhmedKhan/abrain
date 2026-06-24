@@ -1,0 +1,8 @@
+# Weekly (opt-in: `systemctl enable --now gbrain-summarize.timer`).
+[Unit]
+Description=gbrain weekly org AI summaries
+[Timer]
+OnCalendar=Mon 09:00
+Persistent=true
+[Install]
+WantedBy=timers.target

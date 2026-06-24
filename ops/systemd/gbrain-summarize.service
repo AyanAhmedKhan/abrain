@@ -1,0 +1,10 @@
+# gbrain · capped AI org summaries (opt-in; manual or weekly). Cached/once.
+[Unit]
+Description=gbrain org AI summaries
+After=network-online.target
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.summarize

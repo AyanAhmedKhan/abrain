@@ -36,7 +36,7 @@ export default async function Page({ params }: { params: { name: string } }) {
     getIntroPaths(name, c.referred_by),
   ]);
   const founders = c.founders ?? [];
-  const hasIntro = !!intro.referred_by || intro.bridges.length > 0 || intro.investors.length > 0;
+  const hasIntro = !!intro.referred_by || intro.bridges.length > 0 || intro.classmates.length > 0 || intro.investors.length > 0;
 
   // group the financial time-series by metric → points for the trend charts
   const series = (m: string) => fin
@@ -227,6 +227,19 @@ export default async function Page({ params }: { params: { name: string } }) {
                     <li key={i} className="leading-snug">
                       <span className="font-medium">{b.connector}</span>{b.is_dexter && <span className="ml-1 text-[10px] font-semibold text-accentink bg-accenttint rounded px-1">DEXTER</span>}
                       <span className="text-dim"> → both at <span className="text-ink">{b.via_company}</span> → reach <span className="text-ink">{b.person}</span></span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {intro.classmates.length > 0 && (
+              <div>
+                <div className="text-dim text-xs uppercase tracking-wider font-semibold mb-1">Classmate connectors</div>
+                <ul className="space-y-1">
+                  {intro.classmates.map((b, i) => (
+                    <li key={i} className="leading-snug">
+                      <span className="font-medium">{b.connector}</span>{b.is_dexter && <span className="ml-1 text-[10px] font-semibold text-accentink bg-accenttint rounded px-1">DEXTER</span>}
+                      <span className="text-dim"> → both studied at <span className="text-ink">{b.via_company}</span> → reach <span className="text-ink">{b.person}</span></span>
                     </li>
                   ))}
                 </ul>

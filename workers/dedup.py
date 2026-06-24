@@ -229,12 +229,18 @@ def _inv_core(name: str) -> str:
     return _INV_EXTRA.sub(" ", _norm_co(name)).replace(" ", "")
 
 
-def investor_clusters(conn):
-    """Conservative investor dedup: merge only when the normalized cores are
-    EQUAL (firm name variants). Bare-token angels stay distinct (ambiguous)."""
+_SCH_EXTRA = re.compile(r"\b(university|college|institute|institution|school|of|the|and|polytechnic)\b", re.I)
+
+
+def _sch_core(name: str) -> str:
+    return _SCH_EXTRA.sub(" ", _norm_co(name)).replace(" ", "")
+
+
+def _core_clusters(conn, etype: str, core_fn):
+    """Conservative same-entity dedup: merge only when normalized cores are EQUAL
+    (name variants of one firm/school). Shared by investor/org/school types."""
     rows = conn.execute(
-        "select id, canonical, (select count(*) from gb_edge where src=gb_entity.id and rel='invests_in') deg "
-        "from gb_entity where type='investor'").fetchall()
+        "select id, canonical from gb_entity where type=%s", (etype,)).fetchall()
     parent = {r["id"]: r["id"] for r in rows}
 
     def find(x):
@@ -244,7 +250,7 @@ def investor_clusters(conn):
 
     by_core: dict[str, list] = {}
     for r in rows:
-        core = _inv_core(r["canonical"])
+        core = core_fn(r["canonical"])
         if len(core) >= 3:
             by_core.setdefault(core, []).append(r["id"])
     for grp in by_core.values():
@@ -254,6 +260,18 @@ def investor_clusters(conn):
     for r in rows:
         clusters.setdefault(find(r["id"]), []).append({"id": r["id"], "canonical": r["canonical"]})
     return [v for v in clusters.values() if len(v) > 1]
+
+
+def investor_clusters(conn):
+    return _core_clusters(conn, "investor", _inv_core)
+
+
+def org_clusters(conn):
+    return _core_clusters(conn, "org", _inv_core)
+
+
+def school_clusters(conn):
+    return _core_clusters(conn, "school", _sch_core)
 
 
 # ── merge ────────────────────────────────────────────────────
@@ -339,16 +357,31 @@ def run(apply: bool):
         for a, b, w in skips:
             print(f"  {a!r} ≠ {b!r}  [{w}]")
 
-    ic = investor_clusters(conn)
-    print(f"\n=== investor clusters (same firm core): {len(ic)} ===")
-    for members in ic:
-        # keep the cleanest brand name (shortest) — all edges union onto it anyway
-        keeper = min(members, key=lambda m: (len(m["canonical"] or ""), m["canonical"] or ""))
-        for l in [m for m in members if m["id"] != keeper["id"]]:
-            print(f"  KEEP {keeper['canonical']!r}  ← {l['canonical']!r}")
-            if apply:
-                _merge(conn, keeper, l, "investor")
-            total += 1
+    # same-firm-core dedup for investor / org / school (cleanest = shortest name)
+    for kind, clusters in (("investor", investor_clusters(conn)),
+                           ("org", org_clusters(conn)),
+                           ("school", school_clusters(conn))):
+        print(f"\n=== {kind} clusters (same core): {len(clusters)} ===")
+        for members in clusters:
+            keeper = min(members, key=lambda m: (len(m["canonical"] or ""), m["canonical"] or ""))
+            for l in [m for m in members if m["id"] != keeper["id"]]:
+                print(f"  KEEP {keeper['canonical']!r}  ← {l['canonical']!r}")
+                if apply:
+                    _merge(conn, keeper, l, kind)
+                total += 1
+
+    # prune leaf org/school nodes with no edges (e.g. an employer that later
+    # matched a tracked company, leaving the org orphaned). Safe: no other table
+    # references org/school entities.
+    orphans = conn.execute(
+        "select count(*) n from gb_entity e where type in ('org','school') "
+        "and not exists (select 1 from gb_edge where src=e.id or dst=e.id)").fetchone()["n"]
+    print(f"\n=== orphan org/school nodes: {orphans} ===")
+    if apply and orphans:
+        with conn.transaction():
+            conn.execute("delete from gb_entity e where type in ('org','school') "
+                         "and not exists (select 1 from gb_edge where src=e.id or dst=e.id)")
+        print(f"  pruned {orphans}")
 
     print(f"\n{'APPLIED' if apply else 'DRY-RUN'} · {total} merges"
           + ("" if apply else " (run with --apply to execute)"))

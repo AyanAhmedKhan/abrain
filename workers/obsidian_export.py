@@ -35,7 +35,7 @@ VAULT = sys.argv[1] if len(sys.argv) > 1 else "/opt/gbrain/vault"
 
 SCAFFOLD_DIRS = ["_templates", ".obsidian", "Schema", "scripts", "agents"]
 SCAFFOLD_FILES = ["CLAUDE.md", "AGENTS.md"]
-DATA_DIRS = ["References", "Email", "Categories", "indexes"]
+DATA_DIRS = ["References", "Email", "Categories", "indexes", "Organizations", "Schools"]
 
 ILLEGAL = re.compile(r'[/\\:*?"<>|#\^\[\]]')
 
@@ -85,6 +85,15 @@ def fm_list(key, items):
 
 def wl(name, folder="References"):
     return f"[[{folder}/{safe_name(name)}]]"
+
+
+_KIND_FOLDER = {"company": "References", "org": "Organizations", "school": "Schools"}
+
+
+def aff_wl(name, kind):
+    """Wikilink an affiliation to the right folder by entity kind (so past
+    employers/schools never collide with tracked deal companies)."""
+    return wl(name, _KIND_FOLDER.get(kind, "References"))
 
 
 def cr(n):
@@ -358,12 +367,58 @@ def build_model(conn):
         c["team_current"] = sorted(p for p, cur in m.items() if cur)
         c["team_past"] = sorted(p for p, cur in m.items() if not cur)
 
+    # ── affiliations layer: orgs (past/other employers) + schools, from the
+    # works_at / studied_at edges. Builds org/school dicts (with people counts)
+    # and, per person, current employers / past employers / schools (routed by
+    # entity kind so links go to References / Organizations / Schools).
+    orgs, schools = {}, {}
+    aff = defaultdict(lambda: {"cur": set(), "past": set(), "sch": []})
+    for r in conn.execute(
+        """select s.canonical as person, d.canonical as org,
+                  d.attrs->>'linkedin' as li, d.attrs->>'linkedin_id' as lid, d.attrs->>'logo' as logo,
+                  d.attrs->>'summary' as summary, d.attrs->>'summary_src' as summary_src,
+                  coalesce((ed.props->>'current')::bool, false) as cur
+             from gb_edge ed
+             join gb_entity s on s.id=ed.src and s.type='person'
+             join gb_entity d on d.id=ed.dst and d.type='org'
+            where ed.rel='works_at'""").fetchall():
+        o = orgs.setdefault(r["org"], {"linkedin": r["li"], "linkedin_id": r["lid"], "logo": r["logo"],
+                                       "summary": r["summary"], "summary_src": r["summary_src"], "people": set()})
+        o["people"].add(r["person"])
+        aff[r["person"]]["cur" if r["cur"] else "past"].add((r["org"], "org"))
+    for r in conn.execute(
+        """select s.canonical as person, d.canonical as company,
+                  coalesce((ed.props->>'current')::bool, true) as cur
+             from gb_edge ed
+             join gb_entity s on s.id=ed.src and s.type='person'
+             join gb_entity d on d.id=ed.dst and d.type='company'
+            where ed.rel='works_at'""").fetchall():
+        aff[r["person"]]["cur" if r["cur"] else "past"].add((r["company"], "company"))
+    for r in conn.execute(
+        """select s.canonical as person, d.canonical as school,
+                  d.attrs->>'linkedin' as li, d.attrs->>'linkedin_id' as lid
+             from gb_edge ed
+             join gb_entity s on s.id=ed.src and s.type='person'
+             join gb_entity d on d.id=ed.dst and d.type='school'
+            where ed.rel='studied_at'""").fetchall():
+        sc = schools.setdefault(r["school"], {"linkedin": r["li"], "linkedin_id": r["lid"], "people": set()})
+        sc["people"].add(r["person"])
+        if r["school"] not in aff[r["person"]]["sch"]:
+            aff[r["person"]]["sch"].append(r["school"])
+    for person, a in aff.items():
+        p = people.get(person)
+        if p is None:
+            continue
+        p["cur_aff"] = sorted(a["cur"])              # [(name, kind)] current employers
+        p["past_aff"] = sorted(a["past"] - a["cur"])  # current wins on conflict
+        p["schools"] = a["sch"]
+
     # reverse-aggregation: who referred which deals → investor: [companies]
     referred = defaultdict(list)
     for c in companies.values():
         if c["referred_by"]:
             referred[c["referred_by"].strip()].append(c["name"])
-    return companies, emails, people, obs, dict(referred)
+    return companies, emails, people, obs, dict(referred), orgs, schools
 
 
 _email_seen = set()
@@ -464,9 +519,8 @@ def render_company(c, obs, referred, ref_names=frozenset()):
     body.append("")
     # Team — live current roster (Team.base = people whose org → this company) +
     # an explicit Past-employees (alumni) list from past works_at edges.
-    body += ["## Team", "", "![[Team.base]]", ""]
-    if c.get("team_past"):
-        body += ["### Past employees", ""] + [f"- {wl(n)}" for n in c["team_past"]] + [""]
+    body += ["## Team", "", "![[Team.base]]", "",
+             "## Past employees", "", "![[PastEmployees.base]]", ""]
     # About / Business model
     body += ["## About", "", c["summary"] or "", "",
              "## Business Model", "", c["business_model"] or "", ""]
@@ -542,11 +596,14 @@ def render_company(c, obs, referred, ref_names=frozenset()):
     return "\n".join(fm) + "\n" + "\n".join(body)
 
 
-def _exp_line(e, comp_index=None):
+def _exp_line(e, comp_index=None, org_index=None):
     co = e.get("companyName") or ""
-    if comp_index and co:
-        canon = comp_index.get(_norm_co(co))
-        co = f"[[References/{safe_name(canon)}]]" if canon else co
+    if co:
+        n = _norm_co(co)
+        if comp_index and n in comp_index:          # tracked deal company
+            co = f"[[References/{safe_name(comp_index[n])}]]"
+        elif org_index and n in org_index:          # past/other employer (org)
+            co = f"[[Organizations/{safe_name(org_index[n])}]]"
     # surface the company's own LinkedIn (incl. past employers) when present
     li = e.get("companyLinkedinUrl") or (
         f"https://www.linkedin.com/company/{e['companyUniversalName']}"
@@ -565,8 +622,13 @@ def _exp_line(e, comp_index=None):
     return line
 
 
-def _edu_line(e):
-    head = e.get("schoolName") or "(school)"
+def _edu_line(e, school_index=None):
+    name = e.get("schoolName") or ""
+    head = name or "(school)"
+    if name and school_index:
+        canon = school_index.get(_norm_co(name))
+        if canon:
+            head = f"[[Schools/{safe_name(canon)}]]"
     detail = ", ".join(x for x in (e.get("degree"), e.get("fieldOfStudy")) if x)
     tail = " · ".join(x for x in (detail, e.get("period"), e.get("insights")) if x)
     return f"- **{head}**" + (f"  \n  _{tail}_" if tail else "")
@@ -590,11 +652,18 @@ def _honor_line(h):
     return line
 
 
-def render_person(name, p, comp_index=None):
+def render_person(name, p, comp_index=None, org_index=None, school_index=None):
     prof = p.get("profile") or {}
+    # current employers (route org vs company); fall back to extraction company
+    cur = [aff_wl(n, k) for n, k in p.get("cur_aff", [])] or \
+          ([wl(p["company"])] if p.get("company") else [])
+    past = [aff_wl(n, k) for n, k in p.get("past_aff", [])]
+    schools = [wl(s, "Schools") for s in p.get("schools", [])]
     fm = ["---", 'categories:', '  - "[[People]]"',
           fm_scalar("profession", p.get("role")),
-          fm_list("org", [wl(p["company"])] if p.get("company") else []),
+          fm_list("org", cur),
+          fm_list("past_companies", past),
+          fm_list("schools", schools),
           fm_scalar("email", None), fm_scalar("phone", None)]
     if prof:
         fm += [
@@ -639,9 +708,9 @@ def render_person(name, p, comp_index=None):
         if meta:
             body += meta + [""]
     if prof.get("experience"):
-        body += ["## Experience", ""] + [_exp_line(e, comp_index) for e in prof["experience"]] + [""]
+        body += ["## Experience", ""] + [_exp_line(e, comp_index, org_index) for e in prof["experience"]] + [""]
     if prof.get("education"):
-        body += ["## Education", ""] + [_edu_line(e) for e in prof["education"]] + [""]
+        body += ["## Education", ""] + [_edu_line(e, school_index) for e in prof["education"]] + [""]
     if prof.get("skills"):
         body += ["## Skills", "", ", ".join(prof["skills"]), ""]
     if prof.get("certifications"):
@@ -658,6 +727,31 @@ def render_person(name, p, comp_index=None):
     body += ["## Articles", "", "![[Articles by Person.base]]", "",
              "## Meetings", "", "![[Meetings.base]]", "", "## Deals", "", "![[Deal Metrics.base]]", "",
              "## Mentions", "", "![[Mentions.base]]", "", "## Notes", ""]
+    return "\n".join(fm) + "\n" + "\n".join(body)
+
+
+def render_org(name, o):
+    """A past/other employer (not a tracked deal company). Lives in Organizations/
+    so it can never collide with References/ deal companies."""
+    n = len(o.get("people") or [])
+    fm = ["---", 'categories:', '  - "[[Organizations]]"',
+          fm_scalar("linkedin", o.get("linkedin")), fm_scalar("linkedin_id", o.get("linkedin_id")),
+          fm_scalar("logo", o.get("logo")), fm_scalar("connections", n), "---"]
+    body = [""]
+    if o.get("summary"):
+        body += [o["summary"] + (" _(AI summary)_" if o.get("summary_src") == "ai" else ""), ""]
+    body += ["## Current team", "", "![[Team.base]]", "",
+             "## Past employees", "", "![[PastEmployees.base]]", ""]
+    return "\n".join(fm) + "\n" + "\n".join(body)
+
+
+def render_school(name, s):
+    """A college/university; lists its graduates (people who studied there)."""
+    n = len(s.get("people") or [])
+    fm = ["---", 'categories:', '  - "[[Schools]]"',
+          fm_scalar("linkedin", s.get("linkedin")), fm_scalar("linkedin_id", s.get("linkedin_id")),
+          fm_scalar("connections", n), "---"]
+    body = ["", "## Graduates", "", "![[Grads.base]]", ""]
     return "\n".join(fm) + "\n" + "\n".join(body)
 
 
@@ -910,6 +1004,145 @@ views:
 """
 
 
+# People who PAST-worked at the embedding company/org (via their past_companies).
+PASTEMPLOYEES_BASE = """filters:
+  and:
+    - categories.contains(link("People"))
+    - list(past_companies).contains(this)
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Name
+  note.headline:
+    displayName: Headline
+  note.current_company:
+    displayName: Now at
+  note.location:
+    displayName: Location
+  note.linkedin:
+    displayName: LinkedIn
+views:
+  - type: table
+    name: Past employees
+    order:
+      - file.name
+      - headline
+      - current_company
+      - location
+      - linkedin
+    sort:
+      - property: file.name
+        direction: ASC
+"""
+
+# Graduates of the embedding school (via their schools list).
+GRADS_BASE = """filters:
+  and:
+    - categories.contains(link("People"))
+    - list(schools).contains(this)
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Name
+  note.headline:
+    displayName: Headline
+  note.current_company:
+    displayName: Company
+  note.location:
+    displayName: Location
+  note.linkedin:
+    displayName: LinkedIn
+views:
+  - type: table
+    name: Graduates
+    order:
+      - file.name
+      - headline
+      - current_company
+      - location
+      - linkedin
+    sort:
+      - property: file.name
+        direction: ASC
+"""
+
+# Organizations (past/other employers) with a People count; "Hubs" filters to
+# the ones connecting 2+ people (the alumni-bridge value).
+ORGANIZATIONS_BASE = """filters:
+  and:
+    - categories.contains(link("Organizations"))
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Organization
+  note.connections:
+    displayName: People
+  note.linkedin_id:
+    displayName: LinkedIn ID
+  note.linkedin:
+    displayName: LinkedIn
+views:
+  - type: table
+    name: All
+    order:
+      - file.name
+      - connections
+      - linkedin_id
+      - linkedin
+    sort:
+      - property: connections
+        direction: DESC
+  - type: table
+    name: Hubs (2+)
+    filters:
+      and:
+        - note.connections > 1
+    order:
+      - file.name
+      - connections
+    sort:
+      - property: connections
+        direction: DESC
+"""
+
+SCHOOLS_BASE = """filters:
+  and:
+    - categories.contains(link("Schools"))
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: School / University
+  note.connections:
+    displayName: Grads
+  note.linkedin_id:
+    displayName: LinkedIn ID
+  note.linkedin:
+    displayName: LinkedIn
+views:
+  - type: table
+    name: All
+    order:
+      - file.name
+      - connections
+      - linkedin_id
+      - linkedin
+    sort:
+      - property: connections
+        direction: DESC
+  - type: table
+    name: Hubs (2+)
+    filters:
+      and:
+        - note.connections > 1
+    order:
+      - file.name
+      - connections
+    sort:
+      - property: connections
+        direction: DESC
+"""
+
+
 def write_custom_bases(dest):
     """Write our enhanced/relationship bases over the scaffolded copies so the
     source template vault stays pristine. People + Companies surface full LinkedIn
@@ -920,6 +1153,10 @@ def write_custom_bases(dest):
     _write(os.path.join(bd, "People.base"), PEOPLE_BASE)
     _write(os.path.join(bd, "Companies.base"), COMPANIES_BASE)
     _write(os.path.join(bd, "Team.base"), TEAM_BASE)
+    _write(os.path.join(bd, "PastEmployees.base"), PASTEMPLOYEES_BASE)
+    _write(os.path.join(bd, "Grads.base"), GRADS_BASE)
+    _write(os.path.join(bd, "Organizations.base"), ORGANIZATIONS_BASE)
+    _write(os.path.join(bd, "Schools.base"), SCHOOLS_BASE)
 
 
 # non-sector MOC notes our notes link to but the exporter doesn't generate.
@@ -984,10 +1221,11 @@ def build_vault(dest, conn):
     scaffold(dest)
     write_custom_bases(dest)  # People + Companies (LinkedIn cols) + Team (interconnect)
     copy_category_mocs(dest)  # restore People/Companies/Deals + sector MOC notes
-    companies, emails, people, obs, referred = build_model(conn)
-    # normalized company-name → canonical note name, for wikilinking experience
-    # companies in person notes to the right (deduped) company note.
+    companies, emails, people, obs, referred, orgs, schools = build_model(conn)
+    # normalized name → canonical note name, for routing experience/education links.
     comp_index = {_norm_co(n): n for n in companies}
+    org_index = {_norm_co(n): n for n in orgs}
+    school_index = {_norm_co(n): n for n in schools}
 
     sectors = set()
     for c in companies.values():
@@ -1012,10 +1250,27 @@ def build_vault(dest, conn):
             fn = safe_name(n) + ".md"
             if fn.lower() in written:    # name clashes with a company / another person
                 continue
-            _write(os.path.join(dest, "References", fn), render_person(n, p, comp_index))
+            _write(os.path.join(dest, "References", fn), render_person(n, p, comp_index, org_index, school_index))
             written.add(fn.lower())
         except Exception as e:
             errs += 1; print(f"[vault] skip person {n!r}: {e!r}", flush=True)
+    # Organizations (past/other employers) + Schools — separate folders, so they
+    # can never collide with References/ deal companies.
+    for folder, items, render in (("Organizations", orgs, render_org), ("Schools", schools, render_school)):
+        seen_fn = set()
+        for nm, meta in items.items():
+            try:
+                fn = safe_name(nm) + ".md"
+                if fn.lower() in seen_fn:
+                    continue
+                _write(os.path.join(dest, folder, fn), render(nm, meta))
+                seen_fn.add(fn.lower())
+            except Exception as e:
+                errs += 1; print(f"[vault] skip {folder} {nm!r}: {e!r}", flush=True)
+    # MOC notes so [[Organizations]] / [[Schools]] category links resolve
+    for moc, base in (("Organizations", "Organizations"), ("Schools", "Schools")):
+        _write(os.path.join(dest, "Categories", moc + ".md"),
+               f"---\ntags:\n  - categories\n---\n\n![[{base}.base]]\n")
     for e in emails:
         try:
             _write(os.path.join(dest, "Email", e["file"] + ".md"), render_email(e, companies))
@@ -1029,7 +1284,8 @@ def build_vault(dest, conn):
 
     write_indexes(dest, companies, people, emails)
     print(f"[vault] generated {len(companies)} companies, {len(people)} people, "
-          f"{len(emails)} emails, {len(sectors)} categories ({errs} skipped)", flush=True)
+          f"{len(orgs)} orgs, {len(schools)} schools, {len(emails)} emails, "
+          f"{len(sectors)} categories ({errs} skipped)", flush=True)
 
 
 def main():
