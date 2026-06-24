@@ -3,11 +3,12 @@
 Stdlib only (no Flask) — single-user, 127.0.0.1. The dashboard proxies to it
 server-side so all LLM access stays in Python.
 
-    POST /ask                       {"question": "..."} → {"answer": str, "sources": [...]}
-    POST /ingest-drive              {"url": "..."}      → {"queued": [...], "skipped": [...]}
-    POST /ingest-file?filename=...  <raw PDF bytes>     → {"queued": [...], "skipped": [...]}
-    GET  /deck?ref=<bronze ref>                         → {"url": <short-lived signed URL>}
-    GET  /health                                        → {"ok": true}
+    POST /ask                       {"question": "..."}    → {"answer": str, "sources": [...]}
+    POST /ingest-drive              {"url": "..."}         → {"queued": [...], "skipped": [...]}
+    POST /ingest-file?filename=...  <raw PDF bytes>        → {"queued": [...], "skipped": [...]}
+    POST /remove-deck               {"envelope_id": "..."} → {"removed": bool, ...}
+    GET  /deck?ref=<bronze ref>                            → {"url": <short-lived signed URL>}
+    GET  /health                                           → {"ok": true}
 
 Env: ASK_PORT (default 8090).
 """
@@ -20,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from workers.ask import ask
-from workers.connectors.drive import ingest_url, ingest_bytes
+from workers.connectors.drive import ingest_url, ingest_bytes, remove_deck
 from workers.lib import storage
 
 BUCKET = os.environ.get("BRONZE_BUCKET", "gbrain-bronze")
@@ -91,6 +92,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(ingest_url(url))
             except Exception as exc:  # noqa: BLE001
                 return self._send({"error": str(exc)[:300]}, 500)
+        if path == "/remove-deck":
+            eid = (body.get("envelope_id") or "").strip()
+            if not eid:
+                return self._send({"removed": False, "reason": "missing envelope_id"}, 400)
+            try:
+                res = remove_deck(eid)
+                return self._send(res, 200 if res.get("removed") else 404)
+            except Exception as exc:  # noqa: BLE001
+                return self._send({"removed": False, "reason": str(exc)[:300]}, 500)
         self._send({"error": "not found"}, 404)
 
     def log_message(self, *a):  # quiet

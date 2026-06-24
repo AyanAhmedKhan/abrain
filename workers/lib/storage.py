@@ -49,6 +49,17 @@ def download(storage_ref: str) -> bytes:
     return r.content
 
 
+def delete(storage_ref: str) -> bool:
+    """Delete a bronze object. storage_ref is `bucket/path` (as stored in DB).
+    Idempotent: a missing object (404) is treated as success."""
+    url, headers = _base()
+    bucket, _, path = storage_ref.partition("/")
+    r = httpx.delete(f"{url}/storage/v1/object/{bucket}/{path}", headers=headers, timeout=30)
+    if r.status_code not in (200, 404):
+        raise RuntimeError(f"storage delete failed {r.status_code}: {r.text[:200]}")
+    return True
+
+
 def signed_url(storage_ref: str, expires: int = 600) -> str:
     """Short-lived public URL to view/download a private bronze object (e.g. open
     the original deck PDF from the dashboard). Service key never leaves the server."""

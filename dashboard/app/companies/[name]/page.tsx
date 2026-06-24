@@ -4,6 +4,7 @@ import { Badge, Pill, Chip } from "@/components/ui";
 import { Logo, Avatar } from "@/components/Img";
 import { Metric } from "@/components/Chart";
 import { OpenDeck } from "@/components/OpenDeck";
+import { RemoveDeck } from "@/components/RemoveDeck";
 
 export const dynamic = "force-dynamic";
 
@@ -261,6 +262,9 @@ export default async function Page({ params }: { params: { name: string } }) {
                 <span className="font-medium">{e.title}</span>
                 <Badge v={e.poc} />
                 {e.source === "pdf" && <OpenDeck deckRef={e.deck_ref} sourceUrl={e.source_url} />}
+                {e.source === "pdf" && e.envelope_id && (
+                  <span className="ml-auto"><RemoveDeck envelopeId={e.envelope_id} company={e.company ?? undefined} title={e.title} /></span>
+                )}
               </div>
               {e.summary && <p className="text-sm text-dim mt-1">{e.summary}</p>}
             </div>

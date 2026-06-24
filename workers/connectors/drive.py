@@ -141,6 +141,49 @@ def ingest_url(url: str) -> dict:
     return {"queued": queued, "skipped": skipped}
 
 
+def remove_deck(envelope_id: str) -> dict:
+    """Hard-remove one ingested deck: its envelope + everything extracted FROM it
+    (chunks/embeddings, observations, tasks, graph edges, attachment) + the gb_raw
+    row + the bronze PDF object(s). Shared knowledge-graph entities (company, people)
+    are PRESERVED — only this deck's own contributions are removed. Guarded to
+    source='pdf' so it can never delete an email. Idempotent.
+    Returns {removed: bool, title?, objects?, reason?}."""
+    conn = connect()
+    env = conn.execute(
+        "select id, source, raw_id, title from gb_envelope where id=%s", (envelope_id,)
+    ).fetchone()
+    if env is None:
+        return {"removed": False, "reason": "not found"}
+    if env["source"] != "pdf":
+        return {"removed": False, "reason": "not a deck — only uploaded/Drive PDFs can be removed here"}
+
+    # capture bronze refs before the rows go away (raw + attachment may share one object)
+    refs = set()
+    if env["raw_id"]:
+        raw = conn.execute("select storage_ref from gb_raw where id=%s", (env["raw_id"],)).fetchone()
+        if raw and raw["storage_ref"]:
+            refs.add(raw["storage_ref"])
+    for a in conn.execute("select storage_ref from gb_attachment where envelope_id=%s "
+                          "and storage_ref is not null", (envelope_id,)).fetchall():
+        refs.add(a["storage_ref"])
+
+    # delete children first (no ON DELETE CASCADE), then the envelope, then its raw row.
+    # gb_chunk has an FK to gb_attachment, so chunks must go before attachments.
+    for tbl in ("gb_chunk", "gb_observation", "gb_task", "gb_edge", "gb_attachment"):
+        conn.execute(f"delete from {tbl} where envelope_id=%s", (envelope_id,))
+    conn.execute("delete from gb_envelope where id=%s", (envelope_id,))
+    if env["raw_id"]:
+        conn.execute("delete from gb_raw where id=%s", (env["raw_id"],))
+
+    objects = 0
+    for ref in refs:
+        try:
+            storage.delete(ref); objects += 1
+        except Exception as exc:  # noqa: BLE001
+            print(f"[remove_deck] bronze delete failed {ref}: {exc!r}", flush=True)
+    return {"removed": True, "title": env["title"], "objects": objects}
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__); sys.exit(1)

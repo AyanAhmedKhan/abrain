@@ -39,6 +39,7 @@ export type EmailRow = {
   company: string | null; summary: string | null;
   poc: string | null; fitment: string | null; from_actor: string | null;
   kind: string | null; deck_ref: string | null; source_url: string | null;
+  envelope_id: string | null;
 };
 
 export type Person = {

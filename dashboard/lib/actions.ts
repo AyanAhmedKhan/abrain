@@ -39,6 +39,24 @@ export async function ingestDeck(url: string): Promise<IngestResult> {
   } catch (e) { console.error("[ingestDeck]", e); return fail; }
 }
 
+export type RemoveResult = { removed: boolean; title?: string; objects?: number; reason?: string };
+
+// Hard-remove a deck (and everything extracted from it); shared company/people
+// entities are preserved. Revalidates the company page so the row disappears.
+export async function removeDeck(envelopeId: string, company?: string): Promise<RemoveResult> {
+  if (!envelopeId) return { removed: false, reason: "missing id" };
+  try {
+    const r = await fetch(`${ASK_URL}/remove-deck`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ envelope_id: envelopeId }), cache: "no-store",
+      signal: AbortSignal.timeout(60_000),
+    });
+    const j = (await r.json().catch(() => ({}))) as RemoveResult;
+    if (j.removed && company) revalidatePath(`/companies/${encodeURIComponent(company)}`);
+    return j;
+  } catch (e) { console.error("[removeDeck]", e); return { removed: false, reason: "remove service unavailable" }; }
+}
+
 // short-lived signed URL to open an original deck PDF from bronze
 export async function deckUrl(ref: string): Promise<string | null> {
   try {
