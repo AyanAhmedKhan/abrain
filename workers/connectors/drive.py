@@ -77,6 +77,42 @@ def _list_folder(client: httpx.Client, fid: str) -> list[str]:
     return sorted(ids)
 
 
+def _store(conn, data: bytes, name: str, *, origin: str,
+           source_url: str | None = None, drive_id: str | None = None) -> tuple[str, dict]:
+    """Validate one PDF → bronze Storage → INSERT gb_raw (dumb connector; the 005
+    trigger drives the rest). `origin` ∈ drive|computer|email tags provenance so the
+    UI/Obsidian can say where the deck came from. Idempotent via content hash.
+    Returns ('queued', {name,id}) or ('skipped', {url,reason})."""
+    if not data or data[:5] != b"%PDF-":
+        return "skipped", {"url": name, "reason": "not a valid PDF (private, corrupt, or non-PDF)"}
+    h = hashlib.sha256(data).hexdigest()
+    ref = storage.upload(f"{h}.pdf", data, "application/pdf")
+    payload = {"filename": name, "mime": "application/pdf", "hash": h,
+               "storage_path": f"{h}.pdf", "storage_ref": ref,
+               "origin": origin, "gbrain_labels": ["deck"]}
+    if source_url:
+        payload["source_url"] = source_url
+    if drive_id:
+        payload["drive_id"] = drive_id
+    ins = conn.execute(
+        "insert into gb_raw (source, source_id, payload, storage_ref, content_hash) "
+        "values ('pdf', %s, %s::jsonb, %s, %s) on conflict (source, source_id) do nothing returning id",
+        (h, json.dumps(payload), ref, h)).fetchone()
+    if ins:
+        return "queued", {"name": name, "id": h}
+    return "skipped", {"url": name, "reason": "duplicate (already ingested)"}
+
+
+def ingest_bytes(data: bytes, filename: str, origin: str = "computer") -> dict:
+    """Ingest a PDF uploaded directly (e.g. from the user's computer). Same pipeline,
+    same idempotency as Drive links. Returns {queued:[...], skipped:[...]}."""
+    name = (filename or "deck.pdf").strip() or "deck.pdf"
+    if not name.lower().endswith(".pdf"):
+        name += ".pdf"
+    status, detail = _store(connect(), data, name, origin=origin)
+    return {"queued": [detail], "skipped": []} if status == "queued" else {"queued": [], "skipped": [detail]}
+
+
 def ingest_url(url: str) -> dict:
     """Ingest one Drive link (file / Slides / Docs / folder). Returns
     {queued:[{name,id}], skipped:[{url,reason}]}."""
@@ -100,22 +136,8 @@ def ingest_url(url: str) -> dict:
             except Exception as exc:  # noqa: BLE001
                 skipped.append({"url": f, "reason": f"download failed: {str(exc)[:80]}"})
                 continue
-            if not data or data[:5] != b"%PDF-":
-                skipped.append({"url": f, "reason": "not a downloadable PDF (private or non-PDF)"})
-                continue
-            h = hashlib.sha256(data).hexdigest()
-            ref = storage.upload(f"{h}.pdf", data, "application/pdf")
-            payload = {"filename": name, "mime": "application/pdf", "hash": h,
-                       "storage_path": f"{h}.pdf", "storage_ref": ref, "drive_id": f,
-                       "source_url": url, "gbrain_labels": ["deck"]}
-            ins = conn.execute(
-                "insert into gb_raw (source, source_id, payload, storage_ref, content_hash) "
-                "values ('pdf', %s, %s::jsonb, %s, %s) on conflict (source, source_id) do nothing returning id",
-                (h, json.dumps(payload), ref, h)).fetchone()
-            if ins:
-                queued.append({"name": name, "id": f})
-            else:
-                skipped.append({"url": f, "reason": "duplicate (already ingested)"})
+            status, detail = _store(conn, data, name, origin="drive", source_url=url, drive_id=f)
+            (queued if status == "queued" else skipped).append(detail)
     return {"queued": queued, "skipped": skipped}
 
 

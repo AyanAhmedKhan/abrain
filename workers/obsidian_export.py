@@ -169,7 +169,8 @@ def latest(cur, v):
 def build_model(conn):
     rows = conn.execute(
         """select e.source, e.source_id, e.title, e.occurred_at, e.actors, e.body_clean,
-                  e.extraction, r.payload->>'source_url' as source_url
+                  e.extraction, r.payload->>'source_url' as source_url,
+                  r.payload->>'origin' as origin
              from gb_envelope e
              left join gb_raw r on r.id = e.raw_id
             where e.status='indexed' and e.source in ('gmail','pdf')
@@ -284,7 +285,7 @@ def build_model(conn):
         emails.append({
             "file": efile, "title": r["title"], "date": date, "source": r["source"],
             "actors": r["actors"] or {}, "body": r["body_clean"], "ex": ex,
-            "company": name, "source_url": r.get("source_url"),
+            "company": name, "source_url": r.get("source_url"), "origin": r.get("origin"),
         })
 
     # attach rich LinkedIn profiles (Apify, deterministic) keyed by entity name.
@@ -771,10 +772,14 @@ def render_email(e, companies):
     # explicit provenance: where this record came from
     if e["source"] != "pdf":
         origin = "Email (Gmail)"
-    elif e.get("source_url"):
-        origin = "Pitch deck — uploaded via Google Drive"
     else:
-        origin = "Pitch deck — email attachment"
+        origin = {
+            "drive": "Pitch deck — uploaded via Google Drive",
+            "computer": "Pitch deck — uploaded from computer",
+            "email": "Pitch deck — email attachment",
+        }.get(e.get("origin")) or (
+            "Pitch deck — uploaded via Google Drive" if e.get("source_url")
+            else "Pitch deck — email attachment")   # legacy rows (no origin stamp)
 
     fm = ["---", fm_scalar("title", e["title"]),
           fm_scalar("source", "PDF" if e["source"] == "pdf" else "Gmail"),

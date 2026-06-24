@@ -59,4 +59,11 @@ def signed_url(storage_ref: str, expires: int = 600) -> str:
                    json={"expiresIn": expires}, timeout=30)
     if r.status_code != 200:
         raise RuntimeError(f"storage sign failed {r.status_code}: {r.text[:200]}")
-    return url + r.json()["signedURL"]
+    signed = r.json()["signedURL"]          # relative to /storage/v1, e.g. /object/sign/...
+    if signed.startswith("http"):
+        return signed
+    if not signed.startswith("/"):
+        signed = "/" + signed
+    if not signed.startswith("/storage/v1"):
+        signed = "/storage/v1" + signed
+    return url + signed

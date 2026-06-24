@@ -88,9 +88,11 @@ def generate_json(prompt: str, text: str, model: str | None = None) -> LLMResult
     return _result(resp, mdl)
 
 
-def generate_json_from_pdf(prompt: str, pdf_bytes: bytes, model: str | None = None) -> LLMResult:
+def generate_json_from_pdf(prompt: str, pdf_bytes: bytes, model: str | None = None,
+                           coerce: bool = True) -> LLMResult:
     """Structured analysis straight from a PDF (image/scanned decks) via Gemini
-    multimodal — no local text layer needed."""
+    multimodal — no local text layer needed. coerce=False keeps a JSON array
+    intact (used by per-page deck captioning, which legitimately returns a list)."""
     mdl = model or EXTRACT_MODEL
     if FAKE:
         return LLMResult({**_FAKE_NOTE, "_multimodal": True}, "fake-llm", 0, 0)
@@ -100,22 +102,24 @@ def generate_json_from_pdf(prompt: str, pdf_bytes: bytes, model: str | None = No
         contents=[types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"), prompt],
         config={"response_mime_type": "application/json", "temperature": 0.1},
     )
-    return _result(resp, mdl)
+    return _result(resp, mdl, coerce=coerce)
 
 
-def _result(resp, mdl: str) -> LLMResult:
+def _result(resp, mdl: str, coerce: bool = True) -> LLMResult:
+    shape = (lambda d: d) if not coerce else _coerce   # coerce=False keeps arrays intact
     raw = (resp.text or "").strip()
     raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
-        data = _coerce(json.loads(raw))
+        data = shape(json.loads(raw))
     except (json.JSONDecodeError, ValueError) as e:
-        # salvage: grab the first {...} block; else low-confidence stub (no DLQ)
-        m = re.search(r"\{.*\}", raw, re.S)
+        # salvage: grab the first {...} (or [...] when not coercing) block
+        pat = r"\[.*\]" if not coerce else r"\{.*\}"
+        m = re.search(pat, raw, re.S)
         try:
-            data = _coerce(json.loads(m.group(0))) if m else {}
+            data = shape(json.loads(m.group(0))) if m else ([] if not coerce else {})
         except Exception:
-            data = {}
-        if not data:
+            data = [] if not coerce else {}
+        if not data and coerce:
             print(f"[gemini] JSON parse failed ({e}); raw[:120]={raw[:120]!r}", flush=True)
             data = {"company_name": None, "confidence": "low", "_parse_error": str(e)}
     usage = getattr(resp, "usage_metadata", None)

@@ -3,10 +3,11 @@
 Stdlib only (no Flask) — single-user, 127.0.0.1. The dashboard proxies to it
 server-side so all LLM access stays in Python.
 
-    POST /ask           {"question": "..."} → {"answer": str, "sources": [...]}
-    POST /ingest-drive  {"url": "..."}      → {"queued": [...], "skipped": [...]}
-    GET  /deck?ref=<bronze ref>             → {"url": <short-lived signed URL>}
-    GET  /health                            → {"ok": true}
+    POST /ask                       {"question": "..."} → {"answer": str, "sources": [...]}
+    POST /ingest-drive              {"url": "..."}      → {"queued": [...], "skipped": [...]}
+    POST /ingest-file?filename=...  <raw PDF bytes>     → {"queued": [...], "skipped": [...]}
+    GET  /deck?ref=<bronze ref>                         → {"url": <short-lived signed URL>}
+    GET  /health                                        → {"ok": true}
 
 Env: ASK_PORT (default 8090).
 """
@@ -19,10 +20,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 from workers.ask import ask
-from workers.connectors.drive import ingest_url
+from workers.connectors.drive import ingest_url, ingest_bytes
 from workers.lib import storage
 
 BUCKET = os.environ.get("BRONZE_BUCKET", "gbrain-bronze")
+MAX_UPLOAD = int(os.environ.get("MAX_UPLOAD_MB", "40")) * 1024 * 1024
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,7 +55,22 @@ class Handler(BaseHTTPRequestHandler):
         return json.loads(self.rfile.read(n) or "{}")
 
     def do_POST(self):
-        path = self.path.rstrip("/")
+        u = urlparse(self.path)
+        path = u.path.rstrip("/")
+        # binary upload: read raw PDF bytes (not JSON). filename in the query string.
+        if path == "/ingest-file":
+            n = int(self.headers.get("Content-Length", 0))
+            if n <= 0:
+                return self._send({"queued": [], "skipped": [{"url": "", "reason": "empty upload"}]}, 400)
+            if n > MAX_UPLOAD:
+                return self._send({"queued": [], "skipped": [
+                    {"url": "", "reason": f"too large ({n // (1024*1024)}MB > {MAX_UPLOAD // (1024*1024)}MB)"}]}, 413)
+            data = self.rfile.read(n)
+            filename = (parse_qs(u.query).get("filename") or ["deck.pdf"])[0]
+            try:
+                return self._send(ingest_bytes(data, filename))
+            except Exception as exc:  # noqa: BLE001
+                return self._send({"queued": [], "skipped": [{"url": filename, "reason": str(exc)[:200]}]}, 500)
         try:
             body = self._body()
         except Exception:  # noqa: BLE001

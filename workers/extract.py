@@ -180,7 +180,7 @@ def _deck_page_chunks(conn, envelope_id: str, pdf: bytes, n_pages) -> int:
     """Vision-caption every deck page → page-level gb_chunk rows (searchable +
     citable as 'Deck p.N'). Returns the number written (0 → caller falls back)."""
     try:
-        cap = generate_json_from_pdf(CAPTION_PROMPT, pdf)
+        cap = generate_json_from_pdf(CAPTION_PROMPT, pdf, coerce=False)
     except Exception as exc:  # noqa: BLE001
         print(f"[extract] {envelope_id} page-caption failed: {exc!r}", flush=True)
         return 0
