@@ -21,7 +21,34 @@ export async function completeTask(id: string): Promise<boolean> {
   return ok;
 }
 
-export type AskResult = { answer: string; sources: { company: string | null; title: string | null; dist: number }[] };
+const ASK_URL = process.env.ASK_URL || "http://127.0.0.1:8090";
+
+export type IngestResult = { queued: { name: string; id: string }[]; skipped: { url: string; reason: string }[] };
+
+export async function ingestDeck(url: string): Promise<IngestResult> {
+  const fail = { queued: [], skipped: [{ url, reason: "ingest service unavailable" }] };
+  if (!url.trim()) return { queued: [], skipped: [] };
+  try {
+    const r = await fetch(`${ASK_URL}/ingest-drive`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: url.trim() }), cache: "no-store",
+      signal: AbortSignal.timeout(180_000),
+    });
+    if (!r.ok) return fail;
+    return await r.json();
+  } catch (e) { console.error("[ingestDeck]", e); return fail; }
+}
+
+// short-lived signed URL to open an original deck PDF from bronze
+export async function deckUrl(ref: string): Promise<string | null> {
+  try {
+    const r = await fetch(`${ASK_URL}/deck?ref=${encodeURIComponent(ref)}`, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
+    if (!r.ok) return null;
+    return (await r.json()).url ?? null;
+  } catch { return null; }
+}
+
+export type AskResult = { answer: string; sources: { company: string | null; title: string | null; deck?: boolean; page?: number | null; ref?: string | null; dist: number }[] };
 
 export async function askBrain(question: string): Promise<AskResult> {
   const url = process.env.ASK_URL || "http://127.0.0.1:8090";

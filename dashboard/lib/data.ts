@@ -52,7 +52,8 @@ export const getCompanyProfile = (name: string) =>
 
 export const getCompanyEmails = (name: string) =>
   safe(q<EmailRow>(
-    `select date, source, title, company, summary, poc, fitment, from_actor
+    `select date, source, title, company, summary, poc, fitment, from_actor,
+            kind, deck_ref, source_url
        from gb_email_log where company = $1 order by date desc nulls last`,
     [name],
   ), [], "getCompanyEmails");

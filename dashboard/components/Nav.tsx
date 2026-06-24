@@ -11,6 +11,7 @@ const tabs = [
   { href: "/investors", label: "Investors" },
   { href: "/inbox", label: "Inbox" },
   { href: "/ask", label: "Ask" },
+  { href: "/upload", label: "Upload" },
 ];
 
 export default function Nav() {

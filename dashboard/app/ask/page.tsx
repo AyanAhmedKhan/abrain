@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { askBrain, type AskResult } from "@/lib/actions";
 import { PageHeader } from "@/components/ui";
+import { OpenDeck } from "@/components/OpenDeck";
 
 const SAMPLES = [
   "Which fintech companies are raising the most?",
@@ -70,10 +71,16 @@ export default function Page() {
               <ul className="space-y-1.5 text-sm">
                 {res.sources.map((s, i) => (
                   <li key={i} className="flex items-center justify-between gap-3">
-                    {s.company
-                      ? <Link href={`/companies/${encodeURIComponent(s.company)}`} className="text-accent hover:underline">{s.company}</Link>
-                      : <span className="text-dim">—</span>}
-                    <span className="text-dim text-xs truncate max-w-[60%]" title={s.title ?? ""}>{s.title}</span>
+                    <span className="flex items-center gap-2 min-w-0">
+                      {s.company
+                        ? <Link href={`/companies/${encodeURIComponent(s.company)}`} className="text-accent hover:underline">{s.company}</Link>
+                        : <span className="text-dim">—</span>}
+                      {s.deck && <span className="text-[10px] font-semibold rounded px-1.5 py-0.5 bg-accenttint text-accentink shrink-0">Deck{s.page ? ` p.${s.page}` : ""}</span>}
+                    </span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span className="text-dim text-xs truncate max-w-[40vw]" title={s.title ?? ""}>{s.title}</span>
+                      {s.deck && s.ref && <OpenDeck deckRef={s.ref} />}
+                    </span>
                   </li>
                 ))}
               </ul>

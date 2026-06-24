@@ -168,11 +168,13 @@ def latest(cur, v):
 
 def build_model(conn):
     rows = conn.execute(
-        """select source, source_id, title, occurred_at, actors, body_clean, extraction
-             from gb_envelope
-            where status='indexed' and source in ('gmail','pdf')
-              and coalesce(extraction->>'company_name','') <> ''
-            order by occurred_at asc nulls first"""
+        """select e.source, e.source_id, e.title, e.occurred_at, e.actors, e.body_clean,
+                  e.extraction, r.payload->>'source_url' as source_url
+             from gb_envelope e
+             left join gb_raw r on r.id = e.raw_id
+            where e.status='indexed' and e.source in ('gmail','pdf')
+              and coalesce(e.extraction->>'company_name','') <> ''
+            order by e.occurred_at asc nulls first"""
     ).fetchall()
 
     # observations keyed by lower(company canonical)
@@ -282,7 +284,7 @@ def build_model(conn):
         emails.append({
             "file": efile, "title": r["title"], "date": date, "source": r["source"],
             "actors": r["actors"] or {}, "body": r["body_clean"], "ex": ex,
-            "company": name,
+            "company": name, "source_url": r.get("source_url"),
         })
 
     # attach rich LinkedIn profiles (Apify, deterministic) keyed by entity name.
@@ -766,9 +768,17 @@ def render_email(e, companies):
     is_inv = is_investor(entity_type(cdata.get("sector"), comp, cdata.get("summary") or ""))
     mtype = "Deck" if e["source"] == "pdf" else ("VC" if is_inv else "Founder")
     ex = e["ex"]
+    # explicit provenance: where this record came from
+    if e["source"] != "pdf":
+        origin = "Email (Gmail)"
+    elif e.get("source_url"):
+        origin = "Pitch deck — uploaded via Google Drive"
+    else:
+        origin = "Pitch deck — email attachment"
 
     fm = ["---", fm_scalar("title", e["title"]),
           fm_scalar("source", "PDF" if e["source"] == "pdf" else "Gmail"),
+          fm_scalar("origin", origin),
           fm_scalar("from_name", from_name), fm_scalar("from_email", from_email),
           fm_scalar("date_iso", e["date"]),
           fm_list("participants", participants),
@@ -779,14 +789,23 @@ def render_email(e, companies):
           fm_scalar("summary", (ex.get("summary") or "")[:300]),
           fm_scalar("meeting_type", mtype),
           "tags:", "  - email", "---", ""]
+    head = [f"**Source:** {origin}"
+            + (f" · [open deck]({e['source_url']})" if e.get("source_url") else ""), ""]
     if e["source"] == "pdf":
-        parts = [ex.get("summary") or ""]
+        parts = list(head) + [ex.get("summary") or ""]
         if ex.get("key_metrics"):
             parts.append("\n### Key metrics\n" + "\n".join(f"- {m}" for m in ex["key_metrics"]))
+        cites = ex.get("citations") or []
+        if isinstance(cites, list) and cites:
+            parts.append("\n### Figures (with deck page)")
+            for c in cites:
+                if isinstance(c, dict) and c.get("claim"):
+                    pg = f" — p.{c['page']}" if c.get("page") else ""
+                    parts.append(f"- {c['claim']}{pg}")
         bodytext = "\n".join(parts)
     else:
         # re-clean: older envelopes were normalized before the forward-cleaner fix
-        bodytext = clean_body(e["body"]) or ex.get("summary") or ""
+        bodytext = "\n".join(head) + (clean_body(e["body"]) or ex.get("summary") or "")
     return "\n".join(fm) + "\n" + bodytext + "\n"
 
 

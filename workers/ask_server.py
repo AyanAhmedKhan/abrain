@@ -35,24 +35,46 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path.startswith("/health"):
+        u = urlparse(self.path)
+        if u.path.startswith("/health"):
             return self._send({"ok": True})
-        self._send({"error": "POST /ask"}, 404)
+        if u.path.rstrip("/") == "/deck":
+            ref = (parse_qs(u.query).get("ref") or [""])[0]
+            if not ref or not ref.startswith(BUCKET + "/"):  # SSRF guard: bronze only
+                return self._send({"error": "bad ref"}, 400)
+            try:
+                return self._send({"url": storage.signed_url(ref)})
+            except Exception as exc:  # noqa: BLE001
+                return self._send({"error": str(exc)[:200]}, 502)
+        self._send({"error": "not found"}, 404)
+
+    def _body(self):
+        n = int(self.headers.get("Content-Length", 0))
+        return json.loads(self.rfile.read(n) or "{}")
 
     def do_POST(self):
-        if self.path.rstrip("/") != "/ask":
-            return self._send({"error": "not found"}, 404)
+        path = self.path.rstrip("/")
         try:
-            n = int(self.headers.get("Content-Length", 0))
-            q = (json.loads(self.rfile.read(n) or "{}").get("question") or "").strip()
+            body = self._body()
         except Exception:  # noqa: BLE001
             return self._send({"error": "bad request"}, 400)
-        if not q:
-            return self._send({"error": "empty question"}, 400)
-        try:
-            self._send(ask(q))
-        except Exception as exc:  # noqa: BLE001
-            self._send({"error": str(exc)[:300]}, 500)
+        if path == "/ask":
+            q = (body.get("question") or "").strip()
+            if not q:
+                return self._send({"error": "empty question"}, 400)
+            try:
+                return self._send(ask(q))
+            except Exception as exc:  # noqa: BLE001
+                return self._send({"error": str(exc)[:300]}, 500)
+        if path == "/ingest-drive":
+            url = (body.get("url") or "").strip()
+            if not url:
+                return self._send({"error": "empty url"}, 400)
+            try:
+                return self._send(ingest_url(url))
+            except Exception as exc:  # noqa: BLE001
+                return self._send({"error": str(exc)[:300]}, 500)
+        self._send({"error": "not found"}, 404)
 
     def log_message(self, *a):  # quiet
         pass

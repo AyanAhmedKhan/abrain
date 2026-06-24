@@ -3,6 +3,7 @@ import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getC
 import { Badge, Pill, Chip } from "@/components/ui";
 import { Logo, Avatar } from "@/components/Img";
 import { Metric } from "@/components/Chart";
+import { OpenDeck } from "@/components/OpenDeck";
 
 export const dynamic = "force-dynamic";
 
@@ -250,14 +251,16 @@ export default async function Page({ params }: { params: { name: string } }) {
       )}
 
       <section className="card p-5">
-        <h2 className="section-title mb-3">Call notes ({emails.length})</h2>
+        <h2 className="section-title mb-3">Sources ({emails.length})</h2>
         <div className="space-y-3">
           {emails.map((e, i) => (
             <div key={i} className="border-b border-line pb-3 last:border-0">
-              <div className="flex items-center gap-2 text-sm">
+              <div className="flex items-center gap-2 text-sm flex-wrap">
                 <span className="text-dim tabular-nums">{e.date ?? "—"}</span>
+                <span className={`text-[10px] font-semibold rounded px-1.5 py-0.5 ${e.source === "pdf" ? "bg-accenttint text-accentink" : "bg-wash text-dim"}`}>{e.kind ?? (e.source === "pdf" ? "Pitch deck" : "Email")}</span>
                 <span className="font-medium">{e.title}</span>
                 <Badge v={e.poc} />
+                {e.source === "pdf" && <OpenDeck deckRef={e.deck_ref} sourceUrl={e.source_url} />}
               </div>
               {e.summary && <p className="text-sm text-dim mt-1">{e.summary}</p>}
             </div>
