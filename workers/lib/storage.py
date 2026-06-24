@@ -47,3 +47,16 @@ def download(storage_ref: str) -> bytes:
     if r.status_code != 200:
         raise RuntimeError(f"storage download failed {r.status_code}: {r.text[:300]}")
     return r.content
+
+
+def signed_url(storage_ref: str, expires: int = 600) -> str:
+    """Short-lived public URL to view/download a private bronze object (e.g. open
+    the original deck PDF from the dashboard). Service key never leaves the server."""
+    url, headers = _base()
+    bucket, _, path = storage_ref.partition("/")
+    r = httpx.post(f"{url}/storage/v1/object/sign/{bucket}/{path}",
+                   headers={**headers, "Content-Type": "application/json"},
+                   json={"expiresIn": expires}, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"storage sign failed {r.status_code}: {r.text[:200]}")
+    return url + r.json()["signedURL"]

@@ -31,6 +31,17 @@ MAX_READS = 4
 VT_SECONDS = 300
 IDLE_SLEEP = 2.0
 MAX_DOC_CHARS = 120_000          # ~30K tokens; plenty for decks/CIM sections
+DECK_MAX_PAGES = int(os.environ.get("DECK_MAX_PAGES", "40"))   # cap per-page caption chunks
+# decks are visual — read every page image. 'all' = use vision even for text decks.
+DECK_VISION = os.environ.get("DECK_VISION", "").strip().lower()
+
+# Per-page captions for image decks → page-level retrieval + "Deck p.N" citations.
+CAPTION_PROMPT = (
+    "Return ONLY a JSON array. For EACH page/slide of this pitch deck, IN ORDER, output "
+    'one object {"page": <1-based integer>, "text": <a single concise factual caption of '
+    "that slide: its headline plus any exact figures, metrics, labels, axis values or table "
+    "numbers visible — read the charts/graphs; ~40 words>}. Include every page; never invent."
+)
 
 # hard cost rail: pause (don't spend) once today's LLM spend hits this many USD.
 # 0/empty = unlimited. Default ~₹2,100/day — generous (a full re-extract is ~₹90).
@@ -165,6 +176,45 @@ def fan_out(conn, envelope_id: str, env: dict, note: dict) -> None:
             )
 
 
+def _deck_page_chunks(conn, envelope_id: str, pdf: bytes, n_pages) -> int:
+    """Vision-caption every deck page → page-level gb_chunk rows (searchable +
+    citable as 'Deck p.N'). Returns the number written (0 → caller falls back)."""
+    try:
+        cap = generate_json_from_pdf(CAPTION_PROMPT, pdf)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[extract] {envelope_id} page-caption failed: {exc!r}", flush=True)
+        return 0
+    data = cap.data
+    items = data if isinstance(data, list) else (data.get("pages") if isinstance(data, dict) else [])
+    cap_pages = int(n_pages) if n_pages else DECK_MAX_PAGES
+    rows = []
+    for o in items or []:
+        if not isinstance(o, dict):
+            continue
+        txt = (o.get("text") or "").strip()
+        if not txt:
+            continue
+        try:
+            pg = int(o.get("page"))
+        except (TypeError, ValueError):
+            pg = None
+        rows.append((pg if (pg and 1 <= pg <= cap_pages) else None, txt[:4000]))
+    if not rows:
+        return 0
+    conn.execute("delete from gb_chunk where envelope_id=%s", (envelope_id,))
+    for seq, (pg, txt) in enumerate(rows[:DECK_MAX_PAGES]):
+        conn.execute(
+            "insert into gb_chunk (envelope_id, seq, page, text, token_est) values (%s,%s,%s,%s,%s)",
+            (envelope_id, seq, pg, txt, len(txt) // 4))
+    conn.execute(
+        "insert into gb_cost_log (envelope_id, stage, model, tokens_in, tokens_out, usd) "
+        "values (%s,'caption',%s,%s,%s,%s)",
+        (envelope_id, cap.model, cap.tokens_in, cap.tokens_out, usd(cap.model, cap.tokens_in, cap.tokens_out)))
+    if len(rows) > DECK_MAX_PAGES:
+        print(f"[extract] {envelope_id} capped deck captions {DECK_MAX_PAGES}/{len(rows)} pages", flush=True)
+    return min(len(rows), DECK_MAX_PAGES)
+
+
 def process(conn, envelope_id: str) -> str:
     env = conn.execute("select * from gb_envelope where id=%s", (envelope_id,)).fetchone()
     if env is None:
@@ -176,10 +226,15 @@ def process(conn, envelope_id: str) -> str:
         "select text from gb_chunk where envelope_id=%s order by seq", (envelope_id,)
     ).fetchall()
     title = env.get("title") or ""
+    is_pdf = env["source"] == "pdf"
+    # decks are visual: use Gemini vision when there's no text layer, or always
+    # for decks when DECK_VISION=all (max accuracy on chart/table-heavy decks).
+    use_vision = (not rows) or (is_pdf and DECK_VISION == "all")
     multimodal = False
+    pdf = None
 
-    if rows:
-        # text path — chunked email body or native PDF. The subject gives the
+    if rows and not use_vision:
+        # text path — chunked email body or native text PDF. Subject gives the
         # model the company name on forwarded threads ("Call Notes | Acme").
         body = "\n\n".join(r["text"] for r in rows)[:MAX_DOC_CHARS]
         doc = f"Email subject: {title}\n\n{body}" if title else body
@@ -188,10 +243,10 @@ def process(conn, envelope_id: str) -> str:
             print(f"[extract] {envelope_id} escalating → {ESCALATE_MODEL}", flush=True)
             res = generate_json(PROMPT, doc, model=ESCALATE_MODEL)
     else:
-        # no text → image/scanned PDF deck: read it directly via Gemini multimodal
+        # vision path — read the deck pages directly via Gemini multimodal.
         att = conn.execute(
-            "select storage_ref from gb_attachment where envelope_id=%s "
-            "and text_layer = false and storage_ref is not null limit 1", (envelope_id,)
+            "select storage_ref, pages from gb_attachment where envelope_id=%s "
+            "and storage_ref is not null order by text_layer asc limit 1", (envelope_id,)
         ).fetchone()
         if not att:
             conn.execute("update gb_envelope set status='skipped', skip_reason='no_text' where id=%s",
@@ -200,7 +255,7 @@ def process(conn, envelope_id: str) -> str:
         pdf = storage.download(att["storage_ref"])
         res = generate_json_from_pdf(PROMPT, pdf)
         if (res.data.get("confidence") == "low") and res.model != ESCALATE_MODEL:
-            print(f"[extract] {envelope_id} escalating (pdf) → {ESCALATE_MODEL}", flush=True)
+            print(f"[extract] {envelope_id} escalating (deck) → {ESCALATE_MODEL}", flush=True)
             res = generate_json_from_pdf(PROMPT, pdf, model=ESCALATE_MODEL)
         multimodal = True
 
@@ -216,16 +271,18 @@ def process(conn, envelope_id: str) -> str:
         (envelope_id, res.model, res.tokens_in, res.tokens_out,
          usd(res.model, res.tokens_in, res.tokens_out)),
     )
-    # image decks have no chunks — synthesize one from the note so the deck is
-    # still semantically searchable (embed picks up any chunk with a null vector).
-    if multimodal and not rows:
-        syn = "\n".join(x for x in (
-            note.get("company_name"), note.get("summary"),
-            " ".join(note.get("key_metrics") or [])) if x).strip()
-        if syn:
-            conn.execute(
-                "insert into gb_chunk (envelope_id, seq, page, text, token_est) "
-                "values (%s,0,NULL,%s,%s)", (envelope_id, syn[:6000], len(syn) // 4))
+    # image deck (no text chunks): build per-page vision captions so the deck is
+    # searchable + citable by page. Falls back to one synthetic chunk on failure.
+    if multimodal and not rows and pdf:
+        made = _deck_page_chunks(conn, envelope_id, pdf, att.get("pages"))
+        if not made:
+            syn = "\n".join(x for x in (
+                note.get("company_name"), note.get("summary"),
+                " ".join(note.get("key_metrics") or [])) if x).strip()
+            if syn:
+                conn.execute(
+                    "insert into gb_chunk (envelope_id, seq, page, text, token_est) "
+                    "values (%s,0,NULL,%s,%s)", (envelope_id, syn[:6000], len(syn) // 4))
 
     queues.send(conn, queues.Q_EMBED, {"envelope_id": envelope_id})
     tag = f"{res.model}, multimodal" if multimodal else res.model

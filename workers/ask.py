@@ -33,6 +33,8 @@ the firm's own deal-flow database (call notes + structured deal data).
 Rules:
 - Be concise and specific. Cite the company names you used.
 - Quote figures with their company and period (e.g. "Park+ — revenue ₹215 Cr (FY26)").
+- Each excerpt is headed by its source in [brackets]. When you use one, cite that
+  source — for a deck include the page, e.g. "(Acme — Deck p.4)"; for notes name the company.
 - For "which / list / compare" questions, use the DEAL FACTS table.
 - If the answer isn't in the context, say: "I don't have that in the brain yet."
 - Never invent companies or numbers.
@@ -45,7 +47,7 @@ QUESTION: {q}
 === DEAL FACTS (company · sector · stage · ask₹cr · revenue₹cr · valuation₹cr) ===
 {facts}
 
-=== RELEVANT CALL-NOTE EXCERPTS ===
+=== RELEVANT EXCERPTS (call notes + pitch-deck slides; [source] shown per excerpt) ===
 {chunks}
 
 ANSWER:"""
@@ -101,13 +103,25 @@ def retrieve(conn, question: str, k: int = TOP_K) -> list[dict]:
     qv = embed([question])[0]
     vstr = "[" + ",".join(f"{x:.6f}" for x in qv) + "]"
     return conn.execute(
-        """select e.extraction->>'company_name' company, e.title, ch.text,
+        """select e.extraction->>'company_name' company, e.title, e.source, ch.page, ch.text,
+                  coalesce(att.storage_ref, raw.storage_ref) as ref,
                   round((ch.embedding <=> %s::vector)::numeric, 3) dist
-             from gb_chunk ch join gb_envelope e on e.id = ch.envelope_id
+             from gb_chunk ch
+             join gb_envelope e on e.id = ch.envelope_id
+             left join gb_attachment att on att.id = ch.attachment_id
+             left join gb_raw raw on raw.id = e.raw_id
             where ch.embedding is not null and e.status='indexed'
             order by ch.embedding <=> %s::vector limit %s""",
         (vstr, vstr, k),
     ).fetchall()
+
+
+def _cite(h) -> str:
+    """'Company — Deck p.4' / 'Company — <title>' for the context + sources."""
+    label = (h["company"] or h["title"] or "source")
+    if h["source"] == "pdf":
+        return f"{label} — Deck" + (f" p.{h['page']}" if h.get("page") else "")
+    return f"{label} — {(h['title'] or '').replace(chr(10), ' ')[:50]}"
 
 
 def ask(question: str, k: int = TOP_K) -> dict:
@@ -119,17 +133,19 @@ def ask(question: str, k: int = TOP_K) -> dict:
     finally:
         conn.close()  # one-shot per request — don't leak under the long-lived server
     chunks = "\n\n".join(
-        f"[{h['company'] or '?'} — {(h['title'] or '').replace(chr(10),' ')[:60]}]\n"
-        f"{(h['text'] or '').strip()[:MAX_CHUNK_CHARS]}" for h in hits
+        f"[{_cite(h)}]\n{(h['text'] or '').strip()[:MAX_CHUNK_CHARS]}" for h in hits
     ) or "(no matching excerpts)"
     answer = generate_text(PROMPT.format(q=question, dossier=dos, facts=facts, chunks=chunks))
-    # de-duplicated source list, best match first
+    # de-duplicated source list, best match first; carry deck page + ref to open it
     seen, sources = set(), []
     for h in hits:
-        key = (h["company"], h["title"])
-        if key not in seen:
-            seen.add(key)
-            sources.append({"company": h["company"], "title": h["title"], "dist": float(h["dist"])})
+        key = (h["company"], h["title"], h.get("page"))
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append({"company": h["company"], "title": h["title"],
+                        "deck": h["source"] == "pdf", "page": h.get("page"),
+                        "ref": h.get("ref"), "dist": float(h["dist"])})
     return {"answer": answer, "sources": sources}
 
 

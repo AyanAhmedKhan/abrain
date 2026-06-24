@@ -3,8 +3,10 @@
 Stdlib only (no Flask) — single-user, 127.0.0.1. The dashboard proxies to it
 server-side so all LLM access stays in Python.
 
-    POST /ask  {"question": "..."}  → {"answer": str, "sources": [...]}
-    GET  /health                    → {"ok": true}
+    POST /ask           {"question": "..."} → {"answer": str, "sources": [...]}
+    POST /ingest-drive  {"url": "..."}      → {"queued": [...], "skipped": [...]}
+    GET  /deck?ref=<bronze ref>             → {"url": <short-lived signed URL>}
+    GET  /health                            → {"ok": true}
 
 Env: ASK_PORT (default 8090).
 """
@@ -14,8 +16,13 @@ from __future__ import annotations
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
 
 from workers.ask import ask
+from workers.connectors.drive import ingest_url
+from workers.lib import storage
+
+BUCKET = os.environ.get("BRONZE_BUCKET", "gbrain-bronze")
 
 
 class Handler(BaseHTTPRequestHandler):

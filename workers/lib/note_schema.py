@@ -42,6 +42,10 @@ markdown — with exactly these fields (use null when unknown):
   "poc": "High"|"Mid"|"Low"|null, // deal-team Probability-of-Conversion read, ONLY if the
                                   // notes state it (e.g. "POC: High", "POC - Mid"); normalize Medium→Mid
   "fitment": "High"|"Mid"|"Low"|null, // Dexter fitment, ONLY if stated (e.g. "Fitment:", "Fit:")
+  "citations": [{"claim": str, "page": number|null}],
+                                  // for a pitch DECK: tag each key figure with its
+                                  // source page (e.g. {"claim":"ARR ₹50 Cr (FY26)","page":18});
+                                  // [] for emails / call notes / when page is unknown
   "confidence": "high"|"medium"|"low"  // your confidence in the extraction
 }
 
@@ -79,4 +83,9 @@ Rules:
   URL is present.
 - Amounts in INR crore (convert $1M ≈ ₹8.5 Cr if needed, note the conversion in
   key_metrics). Never invent figures — null over guesses. Quote metrics as
-  stated in the document."""
+  stated in the document.
+- PITCH DECKS are visual: READ the charts, tables, graphs and slide images, not
+  just any text. Extract EXACT figures with their unit and period as shown. For a
+  deck, populate `citations` — one entry per key figure/claim with the slide/page
+  number it came from (1-based). This is an audit trail; only cite what is actually
+  on that page, never guess a page."""
