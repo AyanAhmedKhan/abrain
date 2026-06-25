@@ -1,0 +1,8 @@
+# Secrets & local state — never commit.
+.env
+storage_state.json
+*.cookie
+out/
+.venv/
+__pycache__/
+*.pyc
