@@ -1,0 +1,4 @@
+httpx>=0.28,<1.0
+# Only needed if you use the headless login fallback (TRACXN_LOGIN_FALLBACK=1).
+# Cookie-only deployments can skip Playwright entirely.
+playwright>=1.44 ; python_version >= "3.8"

@@ -1,0 +1,101 @@
+[
+  {
+    "id": "52bfc960e4b0420b03968ee8",
+    "name": "Lenskart",
+    "foundedYear": 2008,
+    "stage": "Public",
+    "website": [{ "url": "https://www.lenskart.com/en-us", "isPrimary": "Yes" }],
+    "shortDescription": "Online eyewear retailer offering a range of eyeglasses, sunglasses, and contact lenses for sale",
+    "locations": [{ "city": { "name": "Gurugram" }, "state": { "name": "Haryana" }, "country": { "name": "India" } }],
+    "primaryTaxonomy": [[
+      { "name": "Consumer", "type": "PRACTICE AREA" },
+      { "name": "Fashion Tech", "type": "FEED" },
+      { "name": "B2C Commerce", "type": "BUSINESS MODEL" },
+      { "name": "Eyewear", "type": "BUSINESS MODEL" }
+    ]],
+    "latestRevenue": {
+      "baseCurrency": "INR",
+      "amount": { "INR": { "value": 70092760000 }, "USD": { "value": 829133019.09 } },
+      "asOnDate": { "day": 31, "month": 3, "year": 2025 },
+      "growthDetails": { "oneYear": { "CAGR": 25 }, "threeYear": { "CAGR": 63 }, "fiveYear": { "CAGR": 49 } }
+    },
+    "latestEBITDA": { "amount": { "INR": { "value": 13322600000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "latestValuation": { "amount": { "INR": { "value": 359400800000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "latestEmployeeCount": { "value": 4500 },
+    "totalEquityFunding": { "amount": { "USD": { "value": 1023000000 } } },
+    "tracxnScore": { "value": 72 },
+    "investors": [
+      { "name": "SoftBank Vision Fund" }, { "name": "Chiratae Ventures" }, { "name": "TPG" }
+    ],
+    "keyPeople": [{ "name": "Peyush Bansal", "designation": "CEO" }],
+    "legalEntities": [{ "id": "5bd929338f082d2de7c13f86" }, { "id": "5bb71a9e8f08eb8be9118d63" }],
+    "tracxnPlatformUrl": "https://platform.tracxn.com/a/d/company/52bfc960e4b0420b03968ee8/lenskart.com"
+  },
+  {
+    "id": "52c4526de4b03a1193597d9c",
+    "name": "Paytm",
+    "foundedYear": 2000,
+    "stage": "Public",
+    "website": [{ "url": "https://paytm.com" }],
+    "shortDescription": "Provider of digital payment processing and financial service management tools",
+    "locations": [{ "city": { "name": "Noida" }, "state": { "name": "Uttar Pradesh" }, "country": { "name": "India" } }],
+    "primaryTaxonomy": [[
+      { "name": "FinTech", "type": "PRACTICE AREA" },
+      { "name": "Payments", "type": "FEED" },
+      { "name": "Consumer Payments", "type": "BUSINESS MODEL" }
+    ]],
+    "latestRevenue": {
+      "amount": { "INR": { "value": 76249000000 } },
+      "asOnDate": { "day": 31, "month": 3, "year": 2025 },
+      "growthDetails": { "oneYear": { "CAGR": -10 } }
+    },
+    "latestEBITDA": { "amount": { "INR": { "value": 438000000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "latestNetProfit": { "amount": { "INR": { "value": -6632000000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "latestValuation": { "amount": { "INR": { "value": 1157899400000 }, "USD": { "value": 15619750000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "investors": [{ "name": "Alibaba Group" }, { "name": "Ant Group" }, { "name": "SVB" }],
+    "keyPeople": [{ "name": "Vijay Shekhar Sharma", "role": "Founder & CEO" }],
+    "legalEntities": [{ "id": "5b29e8044f0ca6d57fc3f0d9" }],
+    "tracxnPlatformUrl": "https://platform.tracxn.com/a/d/company/52c4526de4b03a1193597d9c/paytm.com"
+  },
+  {
+    "id": "52d50fd3e4b07c90e4b082a8",
+    "name": "Stripe",
+    "foundedYear": 2010,
+    "stage": "Series I",
+    "website": [{ "url": "https://stripe.com" }],
+    "shortDescription": "Provider of online payment processing infrastructure for businesses",
+    "locations": [{ "city": { "name": "South San Francisco" }, "state": { "name": "California" }, "country": { "name": "United States" } }],
+    "primaryTaxonomy": [[
+      { "name": "FinTech", "type": "PRACTICE AREA" },
+      { "name": "Payments", "type": "FEED" },
+      { "name": "Business Payments", "type": "BUSINESS MODEL" }
+    ]],
+    "latestValuation": { "amount": { "INR": { "value": 14455247000000 }, "USD": { "value": 159000000000 } }, "asOnDate": { "day": 31, "month": 12, "year": 2024 } },
+    "investors": [{ "name": "Andreessen Horowitz" }, { "name": "General Catalyst" }, { "name": "Sequoia Capital" }],
+    "keyPeople": [{ "name": "Patrick Collison", "designation": "CEO" }],
+    "legalEntities": [{ "id": "5f5b8670655da9b89a2a0a4c" }],
+    "tracxnPlatformUrl": "https://platform.tracxn.com/a/d/company/52d50fd3e4b07c90e4b082a8/stripe.com"
+  },
+  {
+    "id": "52e9a763e4b0ec349049a267",
+    "name": "Zerodha",
+    "foundedYear": 2010,
+    "stage": "Unfunded",
+    "website": [{ "url": "https://zerodha.com" }],
+    "shortDescription": "Online discount brokerage platform for retail investors",
+    "locations": [{ "city": { "name": "Bengaluru" }, "state": { "name": "Karnataka" }, "country": { "name": "India" } }],
+    "primaryTaxonomy": [[
+      { "name": "FinTech", "type": "PRACTICE AREA" },
+      { "name": "Investment Tech", "type": "FEED" },
+      { "name": "Online Trading Platforms", "type": "BUSINESS MODEL" }
+    ]],
+    "latestRevenue": { "amount": { "INR": { "value": 88682100000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "latestEBITDA": { "amount": { "INR": { "value": 56637700000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "latestNetProfit": { "amount": { "INR": { "value": 42367200000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "latestValuation": { "amount": { "INR": { "value": 874276900000 }, "USD": { "value": 10530000000 } }, "asOnDate": { "day": 31, "month": 3, "year": 2025 } },
+    "investors": [],
+    "keyPeople": [{ "name": "Nithin Kamath", "designation": "Founder & CEO" }],
+    "legalEntities": [{ "id": "61e9794385cda14b55239ae2" }],
+    "tracxnPlatformUrl": "https://platform.tracxn.com/a/d/company/52e9a763e4b0ec349049a267/zerodha.com"
+  }
+]
