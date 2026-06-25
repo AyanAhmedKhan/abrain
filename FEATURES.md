@@ -27,13 +27,13 @@ is committed — it's a decision menu.
 
 ## Tier 1 — Deal intelligence (highest IB value, reuses existing data)
 - **Auto IC memo / one-pager** ⭐ — one click on a company → Gemini composes a structured investment memo (thesis · traction · financial trend · team · cap table · existing investors · risks · comparables · ask). **M**, ~₹3–5/memo (capped+cached), reuses extraction + observations + graph + `gemini.generate_text`.
-- **Comparables / "similar companies"** — pgvector similarity over company text → "deals like X"; + sector-peer **valuation/revenue multiple** benchmarking. **M**, free (embeddings exist) + cheap.
+- **done Comparables / "similar companies"** — pgvector similarity over company text → "deals like X"; + sector-peer **valuation/revenue multiple** benchmarking. **M**, free (embeddings exist) + cheap.
 - **Deal scoring** — deterministic score from signals (revenue growth, fit, POC, sector momentum) surfaced on cards/pipeline. **S–M**, free.
 
 ## Tier 2 — Smarter search & analytics
 - **RAG upgrades** — conversational follow-ups (chat memory), clickable `[n]` citations that open the source note, and a **scheduled weekly market brief** folded into the digest. **M**, ~₹0.3/query.
 - **Sector / market landscape** page — deal volume, avg ask/valuation, multiples, most-active investors per sector. **M**, free.
-- **Talent / expert finder** — query the people+org+school graph: *"who do we know in fintech / ex-Flipkart / IIT grads"* (sourcing + reference checks). **M**, free (graph exists).
+- **need to done Talent / expert finder** — query the people+org+school graph: *"who do we know in fintech / ex-Flipkart / IIT grads"* (sourcing + reference checks). **M**, free (graph exists).
 - **Saved searches / smart lists** — pin filtered views (e.g. "Seed fintech, POC high, quiet 30d+"). **S**, free.
 
 ## Tier 3 — More coverage (more deal flow in)
