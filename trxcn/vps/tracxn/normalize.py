@@ -73,12 +73,23 @@ def _names(arr: Any, fn, n: int = 5) -> str:
     return "; ".join(out)
 
 
+def _flat_name(v: Any) -> Optional[str]:
+    """A Tracxn name may be a flat string OR a {firstName,middleName,lastName}
+    object (the live API returns the structured form for some people/investors).
+    Flatten either to a plain string."""
+    if isinstance(v, dict):
+        parts = [v.get("firstName"), v.get("middleName"), v.get("lastName")]
+        nm = " ".join(p for p in parts if p)
+        return nm or v.get("name") or None
+    return v or None
+
+
 def _investor_name(i: dict) -> Optional[str]:
-    return i.get("name") or (i.get("institutionalInvestor") or {}).get("name")
+    return _flat_name(i.get("name")) or _flat_name((i.get("institutionalInvestor") or {}).get("name"))
 
 
 def _person_label(p: dict) -> Optional[str]:
-    nm = p.get("name") or (p.get("person") or {}).get("name")
+    nm = _flat_name(p.get("name")) or _flat_name((p.get("person") or {}).get("name"))
     role = p.get("designation") or p.get("role")
     if not role and isinstance(p.get("roles"), list) and p["roles"]:
         role = p["roles"][0]
