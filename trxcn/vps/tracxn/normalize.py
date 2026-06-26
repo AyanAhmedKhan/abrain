@@ -144,3 +144,41 @@ def flatten(c: Optional[dict]) -> Optional[Dict[str, Any]]:
 
 # Column order for CSV / tabular consumers
 COLUMNS: List[str] = list(flatten({"id": "", "name": ""}).keys())
+
+
+# ---------------------------------------------------------------------------
+# Document (statutory filing) records
+# ---------------------------------------------------------------------------
+import re as _re
+
+
+def _slug(name: str) -> str:
+    """Mirror Tracxn's viewer-route slug: lowercase, strip whitespace."""
+    return _re.sub(r"\s+", "", (name or "")).lower()
+
+
+def flatten_document(rec: dict, company: dict, base_url: str) -> Dict[str, Any]:
+    """One statutory-filing record -> a flat document row tagged with its company.
+
+    The durable link is the viewer URL (resolves the PDF through the session).
+    Raw S3 URLs are pre-signed/expiring, so we deliberately don't store them;
+    the document `id` + `viewer_url` let anything re-resolve the file on demand.
+    """
+    mp = rec.get("metaProperties") or {}
+    rid = rec.get("id", "")
+    name = rec.get("name", "")
+    return {
+        "kind": "document",
+        "company_id": company.get("id", ""),
+        "company_name": company.get("name", ""),
+        "id": rid,
+        "name": name,
+        "document_type": rec.get("documentType", ""),
+        "category": rec.get("category", ""),
+        "filing_type": rec.get("filingType", ""),
+        "registrar": rec.get("registrar", ""),
+        "filing_date": _fy(rec.get("filingDate")),
+        "cin": mp.get("cin", "") or (company.get("legal_entity_cin", "")),
+        "viewer_url": f"{base_url}/a/d/document/{rid}/{_slug(name)}" if rid else "",
+        "document_code": rec.get("documentCode", ""),
+    }

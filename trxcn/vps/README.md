@@ -62,7 +62,58 @@ python tracxn_pull.py --ids-file universe.txt --financials --resume
 
 # discover a universe from a saved Tracxn filter, then pull it
 python tracxn_pull.py --discover-file filter.json --resume
+
+# ALSO emit every statutory filing (metadata + viewer link) per company
+python tracxn_pull.py --ids-file universe.txt --documents --resume
+python tracxn_pull.py --names "Lenskart" --documents --docs-since 2018   # limit by filing year
 ```
+
+### Documents (statutory filings)
+
+`--documents` emits **one record per MCA filing** (all types) alongside each company,
+to the same JSONL + gbrain sink:
+
+```json
+{ "kind": "document", "company_id": "52bfc960…", "company_name": "Lenskart",
+  "id": "68dbe00a…", "name": "Form MGT-7", "document_type": "Annual Returns",
+  "filing_date": "2025-09-24", "cin": "U33100DL2008PLC178355",
+  "viewer_url": "https://platform.tracxn.com/a/d/document/68dbe00a…/formmgt-7" }
+```
+
+- **Credit-free** — these MCA filings download outside Tracxn's credit/export system.
+- The link is the **viewer URL** (resolves the PDF through your session). The raw S3
+  files are **pre-signed and expiring**, so we store the durable `id` + `viewer_url`
+  and re-resolve the PDF on demand rather than caching a link that rots.
+- **Volume:** a mature Indian company can have ~1,800 filings. It's only metadata (light),
+  but that's ~36 list calls/company — use `--docs-since YEAR` to cap history, and mind the
+  per-company time at `TRACXN_DELAY_MS`.
+- Filter `kind == "document"` (vs `"company"`) downstream in gbrain.
+
+### Fetching a PDF binary on demand (`tracxn.resolve`)
+
+gbrain stores the lightweight document records; when it actually needs a PDF, it calls
+the resolver. Because the real download URL is **pre-signed/expiring and varies by doc
+type**, the resolver doesn't guess URLs — it opens Tracxn's own viewer page in your saved
+session (Playwright) and intercepts the file response. Universal, and never caches a link
+that rots.
+
+```bash
+# CLI: resolve one document to a PDF on disk
+python -m tracxn.resolve 68dbe00a33632f05f4345ecd --name "Form MGT-7" --out out/docs
+```
+```python
+# from gbrain / code
+from tracxn.config import Config
+from tracxn.resolve import fetch_pdf, fetch_many
+
+pdf_bytes = fetch_pdf(Config(), document_id)                 # one, returns bytes
+results   = fetch_many(Config(), [(id1, name1), id2], "out/docs")  # many, one browser
+#           -> [(document_id, saved_path_or_None, error_or_None), ...]
+```
+
+Needs Playwright + chromium and a valid `storage_state.json`/`TRACXN_COOKIE`. `fetch_many`
+reuses a single browser context for the batch; it honours `TRACXN_PROXY`. Failures are
+returned per-item (never abort the batch).
 
 First run tip: set `GBRAIN_DRY_RUN=1` to verify the JSONL output before POSTing to gbrain.
 

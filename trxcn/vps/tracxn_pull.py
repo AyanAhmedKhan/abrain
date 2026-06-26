@@ -30,7 +30,7 @@ from typing import List, Set
 
 from tracxn.config import Config
 from tracxn.client import TracxnClient, AuthError
-from tracxn.normalize import flatten
+from tracxn.normalize import flatten, flatten_document
 from tracxn.sinks import JsonlSink, GbrainSink, FanoutSink
 
 log = logging.getLogger("tracxn.pull")
@@ -82,6 +82,10 @@ def main() -> int:
     src.add_argument("--ids-file", help="file with one company id per line")
     src.add_argument("--discover-file", help="JSON file holding a Tracxn filter object to page through")
     ap.add_argument("--financials", action="store_true", help="also pull detailed MCA statutory financials")
+    ap.add_argument("--documents", action="store_true",
+                    help="also emit one record per statutory filing (metadata + viewer URL)")
+    ap.add_argument("--docs-since", type=int, metavar="YEAR",
+                    help="with --documents, only filings on/after this filing year")
     ap.add_argument("--resume", action="store_true", help="skip ids already in the state file")
     ap.add_argument("--max", type=int, default=1000, help="max records when discovering")
     ap.add_argument("--limit", type=int, default=0, help="stop after N companies (0 = all)")
@@ -110,9 +114,9 @@ def main() -> int:
         if args.limit:
             ids = ids[: args.limit]
 
-        log.info("processing %d companies (delay %dms, financials=%s)",
-                 len(ids), cfg.delay_ms, args.financials)
-        ok = fail = 0
+        log.info("processing %d companies (delay %dms, financials=%s, documents=%s)",
+                 len(ids), cfg.delay_ms, args.financials, args.documents)
+        ok = fail = docs_total = 0
         for n, cid in enumerate(ids, 1):
             try:
                 c = client.profile(cid)
@@ -128,9 +132,25 @@ def main() -> int:
                     except Exception as e:
                         log.warning("statutory pull failed for %s: %s", row["name"], e)
                 sinks.push(row)
-                mark_processed(cfg.state_path, cid)
                 ok += 1
-                log.info("[%d/%d] %s  rev=%s INRcr", n, len(ids), row["name"], row.get("revenue_inr_cr") or "-")
+
+                if args.documents and row.get("legal_entity_ids"):
+                    ndocs = 0
+                    for le in [x for x in row["legal_entity_ids"].split("; ") if x]:
+                        try:
+                            for rec in client.list_filings(le, since_year=args.docs_since):
+                                sinks.push(flatten_document(rec, row, cfg.base))
+                                ndocs += 1
+                        except Exception as e:
+                            log.warning("filings failed for %s (LE %s): %s", row["name"], le, e)
+                        time.sleep(cfg.delay_s)
+                    docs_total += ndocs
+                    log.info("[%d/%d] %s  rev=%s INRcr  +%d docs",
+                             n, len(ids), row["name"], row.get("revenue_inr_cr") or "-", ndocs)
+                else:
+                    log.info("[%d/%d] %s  rev=%s INRcr", n, len(ids), row["name"], row.get("revenue_inr_cr") or "-")
+
+                mark_processed(cfg.state_path, cid)
             except AuthError as e:
                 log.error("AUTH: %s", e)
                 return 3
@@ -140,7 +160,8 @@ def main() -> int:
             if n < len(ids):
                 time.sleep(cfg.delay_s)
 
-        log.info("DONE: %d ok, %d failed -> %s", ok, fail, cfg.jsonl_path)
+        log.info("DONE: %d companies ok, %d failed, %d document records -> %s",
+                 ok, fail, docs_total, cfg.jsonl_path)
         return 0
     finally:
         sinks.close()

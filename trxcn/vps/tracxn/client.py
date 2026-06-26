@@ -206,6 +206,35 @@ class TracxnClient:
         return self.post("/api/4.0/statutoryfilings/india",
                          {"dataset": "query", "filter": {"id": ids[:10]}})
 
+    def list_filings(self, legal_entity_id, since_year=None, page_size=50, max_records=5000):
+        """List ALL statutory filings for a legal entity (paginated).
+
+        Returns the raw filing records (id, name, documentType, filingDate, ...).
+        `since_year` keeps only filings on/after that filing year (client-side).
+        """
+        out, frm = [], 0
+        while frm < max_records:
+            body = {"dataset": "query", "filter": {"legalEntityId": [legal_entity_id]},
+                    "from": frm, "size": page_size,
+                    "sort": [{"sortField": "filingDate", "order": "DESC"}]}
+            res = self.post("/api/4.0/statutoryfilings/india", body)
+            batch = res.get("result", [])
+            if not batch:
+                break
+            for rec in batch:
+                if since_year:
+                    fy = (rec.get("filingDate") or {}).get("year")
+                    if fy and fy < since_year:
+                        return out          # sorted DESC -> everything after is older
+                out.append(rec)
+            total = res.get("total_count")
+            log.info("filings %s: %d%s", legal_entity_id, len(out), "/" + str(total) if total else "")
+            if len(batch) < page_size or (total and len(out) >= total):
+                break
+            frm += page_size
+            time.sleep(self.cfg.delay_s)
+        return out
+
     def close(self) -> None:
         if self._client:
             self._client.close()
