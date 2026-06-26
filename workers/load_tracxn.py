@@ -43,6 +43,27 @@ _METRICS = [
 _PERSON_ROLE_RE = re.compile(r"^(.*?)\s*\((.*)\)\s*$")
 
 
+def _doc_kind(row: dict) -> str:
+    """Classify an MCA filing into a material kind for display, or 'Other' (noise).
+    MCA dumps are ~80% administrative churn (resignations, optional attachments,
+    KYC); we only graph the filings an analyst acts on."""
+    dt = (row.get("document_type") or "")
+    nm = (row.get("name") or "").lower()
+    if dt == "Financial Documents" or "aoc-4" in nm or "financial statement" in nm or "balance sheet" in nm:
+        return "Financials"
+    if dt == "Annual Reports" or "mgt-7" in nm or "annual return" in nm:
+        return "Annual Return"
+    if dt == "Charge Documents" or "chg-" in nm:
+        return "Charge"
+    if dt == "Valuation Documents" or "valuation" in nm:
+        return "Valuation"
+    if "pas-3" in nm or "allottees" in nm or dt == "Changes to Capital Structure":
+        return "Allotment/Capital"
+    if "dpt-3" in nm:
+        return "Deposits"
+    return "Other"
+
+
 # ── coercion helpers ─────────────────────────────────────────
 
 def _num(v):
@@ -223,12 +244,14 @@ def load_document(conn, row: dict, name_map: dict) -> dict:
     so nothing is downloaded here."""
     cname = name_map.get(row.get("company_id")) or _str(row.get("company_name"))
     doc_name = _str(row.get("name")) or "Filing"
-    if not cname:
+    kind = _doc_kind(row)
+    if not cname or kind == "Other":   # skip noise — only material filings are graphed
         return {"skipped": 1}
     filing_date = _str(row.get("filing_date"))
     canonical = f"{cname} — {doc_name}" + (f" ({filing_date})" if filing_date else "")
     attrs = {k: v for k, v in {
         "doc_type": _str(row.get("document_type")),
+        "filing_kind": kind,
         "file_type": "pdf",
         "company": cname,
         "source_url": _str(row.get("viewer_url")),

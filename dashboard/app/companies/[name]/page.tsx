@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getCompanyFinancials, getIntroPaths, inr } from "@/lib/data";
+import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getCompanyFinancials, getCompanyFinancialsLatest, getIntroPaths, inr } from "@/lib/data";
+import type { FinLatest } from "@/lib/types";
 import { Badge, Pill, Chip } from "@/components/ui";
 import { Logo, Avatar } from "@/components/Img";
 import { Metric } from "@/components/Chart";
@@ -13,6 +14,20 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <div className="text-dim text-[11px] uppercase tracking-wider font-semibold">{label}</div>
       <div className="mt-0.5">{children ?? "—"}</div>
+    </div>
+  );
+}
+
+// one cell of the two-track financials table: value + period + source/confidence
+function TrackCell({ r }: { r?: FinLatest }) {
+  if (!r || r.value_num == null) return <span className="text-dim">—</span>;
+  return (
+    <div>
+      <div>
+        <span className="font-semibold tabular-nums">{inr(r.value_num)}</span>
+        <span className="text-dim text-xs ml-1">{r.period || (r.as_of ? String(r.as_of).slice(0, 7) : "")}</span>
+      </div>
+      <div className="text-dim text-[11px]">{r.source}{r.confidence ? ` · ${r.confidence}` : ""}</div>
     </div>
   );
 }
@@ -33,22 +48,34 @@ export default async function Page({ params }: { params: { name: string } }) {
       </div>
     );
   }
-  const [emails, lp, orgPeople, fin, intro] = await Promise.all([
-    getCompanyEmails(name), getCompanyProfile(name), getCompanyPeople(name), getCompanyFinancials(name),
+  const [emails, lp, orgPeople, fin, finLatest, intro] = await Promise.all([
+    getCompanyEmails(name), getCompanyProfile(name), getCompanyPeople(name),
+    getCompanyFinancials(name), getCompanyFinancialsLatest(name),
     getIntroPaths(name, c.referred_by),
   ]);
   const founders = c.founders ?? [];
   const hasIntro = !!intro.referred_by || intro.bridges.length > 0 || intro.classmates.length > 0 || intro.investors.length > 0;
 
-  // group the financial time-series by metric → points for the trend charts
-  const series = (m: string) => fin
-    .filter((f) => f.metric === m && f.value_num != null)
+  // two financial tracks: Management (founder/deck) vs Verified (Tracxn/MCA) — never merged
+  const byMetric: Record<string, { management?: FinLatest; verified?: FinLatest }> = {};
+  for (const f of finLatest) (byMetric[f.metric] ??= {})[f.track as "management" | "verified"] = f;
+  const finMetrics: [string, string][] = [["revenue", "Revenue"], ["ebitda", "EBITDA"],
+    ["net_profit", "Net Profit"], ["valuation", "Valuation"], ["funding", "Total Funding"]];
+  const hasFin = finMetrics.some(([k]) => byMetric[k]?.management || byMetric[k]?.verified);
+  const vRev = byMetric.revenue?.verified?.value_num, vVal = byMetric.valuation?.verified?.value_num;
+  const multiple = vRev && vVal ? (parseFloat(vVal) / parseFloat(vRev)).toFixed(1) : null;
+
+  // trend series split by track so founder and verified lines never blend
+  const series = (m: string, track: string) => fin
+    .filter((f) => f.metric === m && f.track === track && f.value_num != null)
     .map((f) => ({ label: f.period || (f.as_of ? String(f.as_of).slice(0, 7) : ""), value: parseFloat(f.value_num as string) }))
     .filter((p) => !Number.isNaN(p.value));
-  const rev = series("revenue"), val = series("valuation"), ebitda = series("ebitda");
-  const lastRev = rev.at(-1)?.value, lastVal = val.at(-1)?.value;
-  const multiple = lastRev && lastVal ? (lastVal / lastRev).toFixed(1) : null;
-  const hasTrends = rev.length + val.length + ebitda.length > 0;
+  const trendCards = ([["revenue", "Revenue"], ["valuation", "Valuation"], ["ebitda", "EBITDA"]] as [string, string][])
+    .flatMap(([k, label]) => (["management", "verified"] as const).map((tr) => {
+      const pts = series(k, tr);
+      return pts.length ? <Metric key={k + tr} title={`${label} · ${tr === "management" ? "Mgmt" : "Verified"}`} points={pts} /> : null;
+    })).filter(Boolean);
+  const hasTrends = trendCards.length > 0;
 
   return (
     <div className="space-y-5">
@@ -100,26 +127,49 @@ export default async function Page({ params }: { params: { name: string } }) {
         <Field label="POC"><Badge v={c.poc} /></Field>
         <Field label="Fitment"><Badge v={c.fitment} /></Field>
         <Field label="Ask">{inr(c.ask_inr_cr)}</Field>
-        <Field label="Valuation">{inr(c.valuation_inr_cr)}</Field>
-        <Field label="Revenue">{inr(c.revenue_inr_cr)}{c.revenue_period ? ` (${c.revenue_period})` : ""}</Field>
-        <Field label="EBITDA">{inr(c.ebitda_inr_cr)}</Field>
         <Field label="HQ">{c.hq}</Field>
         <Field label="Founded">{c.founded}</Field>
         <Field label="Website">{c.website ? <a href={c.website} className="text-accent hover:underline" target="_blank" rel="noreferrer">link</a> : "—"}</Field>
         <Field label="Last interaction">{c.last_interaction ? String(c.last_interaction).slice(0, 10) : "—"}</Field>
       </div>
 
-      {hasTrends && (
+      {hasFin && (
         <section className="card p-5">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="section-title">Financial trends</h2>
-            {multiple && <span className="text-dim text-xs">Valuation / Revenue ≈ <b className="text-ink tabular-nums">{multiple}×</b></span>}
+            <h2 className="section-title">Financials</h2>
+            <span className="text-dim text-xs">Management (founder/deck) vs Verified (Tracxn/MCA){multiple ? ` · Val/Rev ≈ ${multiple}×` : ""}</span>
           </div>
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <Metric title="Revenue" points={rev} />
-            <Metric title="Valuation" points={val} />
-            <Metric title="EBITDA" points={ebitda} />
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-dim text-[11px] uppercase tracking-wider text-left">
+                  <th className="font-semibold py-1.5 pr-4">Metric</th>
+                  <th className="font-semibold py-1.5 pr-4">Management</th>
+                  <th className="font-semibold py-1.5">Verified</th>
+                </tr>
+              </thead>
+              <tbody>
+                {finMetrics.map(([k, label]) => {
+                  const m = byMetric[k]?.management, v = byMetric[k]?.verified;
+                  if (!m && !v) return null;
+                  return (
+                    <tr key={k} className="border-t border-line align-top">
+                      <td className="py-2 pr-4 font-medium">{label}</td>
+                      <td className="py-2 pr-4"><TrackCell r={m} /></td>
+                      <td className="py-2"><TrackCell r={v} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
+        </section>
+      )}
+
+      {hasTrends && (
+        <section className="card p-5">
+          <h2 className="section-title mb-3">Financial trends</h2>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{trendCards}</div>
         </section>
       )}
 

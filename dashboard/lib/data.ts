@@ -1,7 +1,7 @@
 import { q } from "./db";
 import type {
   Company, Stats, EmailRow, Person, PersonFull, CompanyProfile, OrgPerson,
-  PipelineDeal, FinPoint, Inbox, Task, InvestorRow, CompanyInvestor, Bridge, IntroPaths,
+  PipelineDeal, FinPoint, FinLatest, Inbox, Task, InvestorRow, CompanyInvestor, Bridge, IntroPaths,
   InvestorPortfolioRow, CoInvestor,
 } from "./types";
 import { PIPELINE_STAGES } from "./types";
@@ -165,12 +165,19 @@ export const getOwnerSuggestions = () =>
          where ed.rel='works_at' and d.canonical='Dexter Capital'
       ) x where coalesce(o,'')<>'' order by o`).then((r) => r.map((x) => x.o)), [], "getOwnerSuggestions");
 
-// ── financial trends ─────────────────────────────────────────
+// ── financial trends (per source/track) ──────────────────────
 export const getCompanyFinancials = (name: string) =>
   safe(q<FinPoint>(
-    `select metric, value_num, period, as_of, created_at
+    `select metric, value_num, period, as_of, created_at, source, track
        from gb_company_financials where company = $1
-      order by metric, coalesce(as_of, created_at::date), created_at`, [name]), [], "getCompanyFinancials");
+      order by metric, track, coalesce(as_of, created_at::date), created_at`, [name]), [], "getCompanyFinancials");
+
+// ── two-track latest: Management (founder/deck) vs Verified (Tracxn/MCA) ──
+export const getCompanyFinancialsLatest = (name: string) =>
+  safe(q<FinLatest>(
+    `select metric, track, value_num, period, as_of, source, confidence
+       from gb_company_financials_latest where company = $1
+      order by metric, track`, [name]), [], "getCompanyFinancialsLatest");
 
 // ── inbox (follow-ups, new deals, quiet, fresh financials) ───
 export const getInbox = (): Promise<Inbox> => safe((async () => {

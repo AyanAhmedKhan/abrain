@@ -178,15 +178,15 @@ def build_model(conn):
             order by e.occurred_at asc nulls first"""
     ).fetchall()
 
-    # observations keyed by lower(company canonical)
-    obs = defaultdict(dict)
+    # two-track financials: latest per (company, metric, track) from the gold view.
+    # obs[company_lower] = {"management": {metric: row}, "verified": {metric: row}}
+    # management = founder call / deck (High|Medium); verified = Tracxn / MCA (Verified).
+    obs = defaultdict(lambda: {"management": {}, "verified": {}})
     for r in conn.execute(
-        """select e.canonical, o.metric, o.value_num, o.unit, o.period, o.as_of
-             from gb_observation o join gb_entity e on e.id=o.entity_id
-            where e.type='company'
-            order by o.as_of asc nulls first, o.created_at asc"""
+        """select company, metric, track, value_num, unit, period, as_of, source, confidence
+             from gb_company_financials_latest"""
     ).fetchall():
-        obs[r["canonical"].lower()][r["metric"]] = r  # most-recent as_of wins
+        obs[r["company"].lower()][r["track"]][r["metric"]] = r
 
     # canonicalize extraction company names → merged entity canonical (via aliases),
     # so duplicates collapse to ONE note and wikilinks resolve to the real node.
@@ -460,6 +460,18 @@ def render_company(c, obs, referred, ref_names=frozenset()):
     email_links = [wl(e, "Email") for e in c["emails"]]
     has_deal = c["ask"] is not None or bool(c["round_type"])
 
+    # two financial tracks (see build_model): management (founder/deck) vs verified (Tracxn/MCA)
+    fin = obs.get(name.lower()) or {"management": {}, "verified": {}}
+    mgmt, ver = fin.get("management", {}), fin.get("verified", {})
+
+    def _fv(td, m):  # latest value_num for a metric in a track, else None
+        r = td.get(m)
+        return r["value_num"] if r else None
+
+    def _fp(td, m):  # period (or as_of date) label for a metric in a track
+        r = td.get(m)
+        return (r["period"] or (r["as_of"].isoformat() if r.get("as_of") else None)) if r else None
+
     fm = ["---", 'categories:', '  - "[[Companies]]"']
     fm.append(fm_list("type", type_links))
     fm.append(fm_list("people", people_links))
@@ -487,6 +499,15 @@ def render_company(c, obs, referred, ref_names=frozenset()):
             fm_scalar("valuation_inr_cr", c["valuation"]),
             fm_scalar("ebitda", cr(c["ebitda"])),
             fm_scalar("ask", cr(c["ask"])),
+            # verified track (Tracxn/MCA) — kept separate from the management figures above
+            fm_scalar("revenue_verified_inr_cr", _fv(ver, "revenue")),
+            fm_scalar("revenue_verified_period", _fp(ver, "revenue")),
+            fm_scalar("valuation_verified_inr_cr", _fv(ver, "valuation")),
+            fm_scalar("ebitda_verified_inr_cr", _fv(ver, "ebitda")),
+            fm_scalar("net_profit_verified_inr_cr", _fv(ver, "net_profit")),
+            fm_scalar("financials_verified_source",
+                      next((r["source"] for r in (ver.get("revenue"), ver.get("valuation"),
+                                                  ver.get("ebitda")) if r), None)),
             fm_list("referred_by", [wl_or_text(c["referred_by"], ref_names)] if c["referred_by"] else []),
         ]
     else:
@@ -551,22 +572,26 @@ def render_company(c, obs, referred, ref_names=frozenset()):
     body += ["## Traction & Metrics", ""]
     if c["key_metrics"]:
         body += [f"- {m}" for m in c["key_metrics"]] + [""]
-    # Financials
-    o = obs.get(name.lower(), {})
-    body += ["## Financials", "", "| Line Item | Value | Period | Source |",
-             "|-----------|-------|--------|--------|"]
+    # Financials — TWO TRACKS side by side: Management (founder/deck) vs Verified (Tracxn/MCA).
+    body += ["## Financials", "",
+             "_Management (founder/deck) vs Verified (Tracxn/MCA) — shown side by side, never merged._", "",
+             "| Line Item | Track | Value (₹ Cr) | Period | Source | Confidence |",
+             "|-----------|-------|--------------|--------|--------|------------|"]
     fin_rows = []
-    rv = o.get("revenue")
-    rev_val = cr(c["revenue"]) or (cr(rv["value_num"]) if rv else None)
-    rev_period = c["revenue_period"] or (rv["period"] if rv else "")
-    if rev_val:
-        fin_rows.append(("Revenue", rev_val, rev_period))
-    if c["ebitda"] is not None:
-        fin_rows.append(("EBITDA", cr(c["ebitda"]), ""))
-    for item, val, period in fin_rows:
-        body.append(f"| {item} | {val or ''} | {period or ''} | Call notes |")
-    if not fin_rows:
-        body.append("| Revenue | | | |")
+    for mkey, label in (("revenue", "Revenue"), ("ebitda", "EBITDA"),
+                        ("net_profit", "Net Profit"), ("valuation", "Valuation"),
+                        ("funding", "Total Funding")):
+        for tname, td in (("Management", mgmt), ("Verified", ver)):
+            r = td.get(mkey)
+            if r and r.get("value_num") is not None:
+                per = r["period"] or (r["as_of"].isoformat() if r.get("as_of") else "")
+                fin_rows.append(f"| {label} | {tname} | {cr(r['value_num']) or r['value_num']} "
+                                f"| {per} | {r['source']} | {r['confidence']} |")
+    # fallback: older notes whose management revenue lives only in extraction (no observation row)
+    if not mgmt.get("revenue") and c["revenue"]:
+        fin_rows.insert(0, f"| Revenue | Management | {cr(c['revenue'])} "
+                           f"| {c['revenue_period'] or ''} | Call notes | High |")
+    body += fin_rows or ["| Revenue | | | | | |"]
     body.append("")
     # Valuation
     body += ["## Valuation", "", "| Metric | Value | Source |",

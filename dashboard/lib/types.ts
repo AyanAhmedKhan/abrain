@@ -99,6 +99,19 @@ export const PIPELINE_STAGES = [
 
 export type FinPoint = {
   metric: string; value_num: string | null; period: string | null; as_of: string | null; created_at: string;
+  source: string | null; track: string | null;
+};
+
+// one row per (metric, track): the latest Management vs Verified figure with provenance
+export type FinLatest = {
+  metric: string; track: string; value_num: string | null; period: string | null;
+  as_of: string | null; source: string | null; confidence: string | null;
+};
+
+// a material MCA statutory filing (Tracxn) linked to a company
+export type CompanyDoc = {
+  kind: string | null; title: string | null; filing_date: string | null;
+  url: string | null; doc_type: string | null; registrar: string | null;
 };
 
 export type Task = {
