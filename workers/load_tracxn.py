@@ -132,9 +132,13 @@ def _replace_observation(conn, entity_id, metric, value_num, unit, period, as_of
 
 # ── per-company load ─────────────────────────────────────────
 
-def load_company(conn, row: dict) -> dict:
-    """Load one flattened Tracxn row. Returns per-row counts."""
-    name = _str(row.get("name"))
+def load_company(conn, row: dict, name_map: dict) -> dict:
+    """Load one flattened Tracxn company row. Returns per-row counts.
+
+    name_map ({tracxn_id: gbrain_canonical}) lets us upsert under the EXISTING
+    gbrain name so Tracxn enriches the right entity in place even when Tracxn's
+    own name differs (e.g. 'Agarwal' vs 'Agarwal Packers & Movers')."""
+    name = name_map.get(row.get("id")) or _str(row.get("name"))
     if not name:
         return {"skipped": 1}
 
@@ -212,6 +216,43 @@ def load_company(conn, row: dict) -> dict:
     return counts
 
 
+def load_document(conn, row: dict, name_map: dict) -> dict:
+    """Load one Tracxn statutory-filing record → a document entity linked to its
+    company. We store metadata + the durable viewer_url only; the PDF binary is
+    resolved on demand via tracxn.resolve.fetch_pdf (raw S3 links are expiring),
+    so nothing is downloaded here."""
+    cname = name_map.get(row.get("company_id")) or _str(row.get("company_name"))
+    doc_name = _str(row.get("name")) or "Filing"
+    if not cname:
+        return {"skipped": 1}
+    filing_date = _str(row.get("filing_date"))
+    canonical = f"{cname} — {doc_name}" + (f" ({filing_date})" if filing_date else "")
+    attrs = {k: v for k, v in {
+        "doc_type": _str(row.get("document_type")),
+        "file_type": "pdf",
+        "company": cname,
+        "source_url": _str(row.get("viewer_url")),
+        "doc_date": filing_date,
+        "confidentiality": "public",          # MCA statutory filings are public record
+        "category": _str(row.get("category")),
+        "filing_type": _str(row.get("filing_type")),
+        "registrar": _str(row.get("registrar")),
+        "document_code": _str(row.get("document_code")),
+        "source": SOURCE,
+    }.items() if v is not None}
+    keys = {k: v for k, v in {
+        "tracxn_doc_id": _str(row.get("id")),
+        "tracxn_company_id": _str(row.get("company_id")),
+        "cin": _str(row.get("cin")),
+    }.items() if v is not None}
+    ckeys = {"tracxn_id": _str(row.get("company_id"))} if _str(row.get("company_id")) else {}
+    with conn.transaction():
+        cid = upsert(conn, "company", cname, {}, ckeys)   # find-or-create the company node
+        did = upsert(conn, "document", canonical, attrs, keys)
+        linked = link(conn, did, "about", cid)
+    return {"documents": 1, "doc_links": 1 if linked else 0}
+
+
 def _split_list(s) -> list[str]:
     return [x.strip() for x in (s or "").split(";") if x.strip()]
 
@@ -225,8 +266,10 @@ def _parse_person(label: str) -> tuple[str | None, str | None]:
 
 # ── driver ───────────────────────────────────────────────────
 
-def load_jsonl(conn, path: str) -> dict:
-    total = {"companies": 0, "observations": 0, "investor_links": 0, "people_links": 0, "skipped": 0, "errors": 0}
+def load_jsonl(conn, path: str, name_map: dict | None = None) -> dict:
+    name_map = name_map or {}
+    total = {"companies": 0, "observations": 0, "investor_links": 0, "people_links": 0,
+             "documents": 0, "doc_links": 0, "skipped": 0, "errors": 0}
     with open(path, encoding="utf-8") as fh:
         for ln in fh:
             ln = ln.strip()
@@ -240,8 +283,9 @@ def load_jsonl(conn, path: str) -> dict:
             if not isinstance(row, dict):
                 total["errors"] += 1
                 continue
+            handler = load_document if row.get("kind") == "document" else load_company
             try:
-                for k, v in load_company(conn, row).items():
+                for k, v in handler(conn, row, name_map).items():
                     total[k] = total.get(k, 0) + v
             except Exception as e:  # noqa: BLE001 — one bad row never aborts the load
                 total["errors"] += 1
@@ -249,17 +293,22 @@ def load_jsonl(conn, path: str) -> dict:
     return total
 
 
-def main(path: str) -> None:
+def main(path: str, name_map_path: str | None = None) -> None:
     conn = connect()
-    t = load_jsonl(conn, path)
+    name_map = {}
+    if name_map_path:
+        with open(name_map_path, encoding="utf-8") as fh:
+            name_map = json.load(fh)
+    t = load_jsonl(conn, path, name_map)
     print(
         f"tracxn loaded: {t['companies']} companies · {t['observations']} observations · "
-        f"{t['investor_links']} investor links · {t['people_links']} people links "
-        f"({t['skipped']} skipped, {t['errors']} errors)"
+        f"{t['investor_links']} investor links · {t['people_links']} people links · "
+        f"{t['documents']} documents ({t['doc_links']} linked) "
+        f"[{t['skipped']} skipped, {t['errors']} errors]"
     )
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        sys.exit("usage: python -m workers.load_tracxn <tracxn.jsonl>")
-    main(sys.argv[1])
+        sys.exit("usage: python -m workers.load_tracxn <tracxn.jsonl> [name_map.json]")
+    main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
