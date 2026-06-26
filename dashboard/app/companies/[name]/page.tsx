@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getCompanyFinancials, getCompanyFinancialsLatest, getIntroPaths, inr } from "@/lib/data";
+import { getCompany, getCompanyEmails, getCompanyProfile, getCompanyPeople, getCompanyFinancials, getCompanyFinancialsLatest, getCompanyDocuments, getIntroPaths, inr } from "@/lib/data";
 import type { FinLatest } from "@/lib/types";
 import { Badge, Pill, Chip } from "@/components/ui";
 import { Logo, Avatar } from "@/components/Img";
@@ -48,11 +48,12 @@ export default async function Page({ params }: { params: { name: string } }) {
       </div>
     );
   }
-  const [emails, lp, orgPeople, fin, finLatest, intro] = await Promise.all([
+  const [emails, lp, orgPeople, fin, finLatest, docs, intro] = await Promise.all([
     getCompanyEmails(name), getCompanyProfile(name), getCompanyPeople(name),
-    getCompanyFinancials(name), getCompanyFinancialsLatest(name),
+    getCompanyFinancials(name), getCompanyFinancialsLatest(name), getCompanyDocuments(name),
     getIntroPaths(name, c.referred_by),
   ]);
+  const DOC_KINDS = ["Financials", "Annual Return", "Charge", "Allotment/Capital", "Valuation", "Deposits"];
   const founders = c.founders ?? [];
   const hasIntro = !!intro.referred_by || intro.bridges.length > 0 || intro.classmates.length > 0 || intro.investors.length > 0;
 
@@ -170,6 +171,37 @@ export default async function Page({ params }: { params: { name: string } }) {
         <section className="card p-5">
           <h2 className="section-title mb-3">Financial trends</h2>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">{trendCards}</div>
+        </section>
+      )}
+
+      {docs.length > 0 && (
+        <section className="card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="section-title">Statutory filings</h2>
+            <span className="text-dim text-xs">MCA via Tracxn · {docs.length}</span>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+            {DOC_KINDS.map((k) => {
+              const items = docs.filter((d) => d.kind === k);
+              if (!items.length) return null;
+              return (
+                <div key={k}>
+                  <div className="text-dim text-[11px] uppercase tracking-wider font-semibold mb-1">{k} <span className="opacity-70">({items.length})</span></div>
+                  <ul className="space-y-1 text-sm">
+                    {items.slice(0, 6).map((d, i) => (
+                      <li key={i} className="flex items-baseline gap-2">
+                        <span className="text-dim tabular-nums text-xs w-[88px] shrink-0">{d.filing_date ?? "—"}</span>
+                        {d.url
+                          ? <a href={d.url} target="_blank" rel="noreferrer" className="text-accent hover:underline truncate">{d.title}</a>
+                          : <span className="truncate">{d.title}</span>}
+                      </li>
+                    ))}
+                    {items.length > 6 && <li className="text-dim text-xs pl-[96px]">+{items.length - 6} more</li>}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 

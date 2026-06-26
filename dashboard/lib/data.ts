@@ -1,7 +1,7 @@
 import { q } from "./db";
 import type {
   Company, Stats, EmailRow, Person, PersonFull, CompanyProfile, OrgPerson,
-  PipelineDeal, FinPoint, FinLatest, Inbox, Task, InvestorRow, CompanyInvestor, Bridge, IntroPaths,
+  PipelineDeal, FinPoint, FinLatest, CompanyDoc, Inbox, Task, InvestorRow, CompanyInvestor, Bridge, IntroPaths,
   InvestorPortfolioRow, CoInvestor,
 } from "./types";
 import { PIPELINE_STAGES } from "./types";
@@ -178,6 +178,13 @@ export const getCompanyFinancialsLatest = (name: string) =>
     `select metric, track, value_num, period, as_of, source, confidence
        from gb_company_financials_latest where company = $1
       order by metric, track`, [name]), [], "getCompanyFinancialsLatest");
+
+// ── material MCA statutory filings (Tracxn) for a company ──
+export const getCompanyDocuments = (name: string) =>
+  safe(q<CompanyDoc>(
+    `select kind, title, filing_date, url, doc_type, registrar
+       from gb_company_documents where company = $1
+      order by filing_date desc nulls last, kind`, [name]), [], "getCompanyDocuments");
 
 // ── inbox (follow-ups, new deals, quiet, fresh financials) ───
 export const getInbox = (): Promise<Inbox> => safe((async () => {

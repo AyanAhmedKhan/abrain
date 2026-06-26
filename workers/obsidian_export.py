@@ -188,6 +188,15 @@ def build_model(conn):
     ).fetchall():
         obs[r["company"].lower()][r["track"]][r["metric"]] = r
 
+    # material statutory filings (Tracxn/MCA) per company, most-recent first
+    docs = defaultdict(list)
+    for r in conn.execute(
+        """select company, kind, title, filing_date, url
+             from gb_company_documents
+            order by filing_date desc nulls last"""
+    ).fetchall():
+        docs[r["company"].lower()].append(r)
+
     # canonicalize extraction company names → merged entity canonical (via aliases),
     # so duplicates collapse to ONE note and wikilinks resolve to the real node.
     canon_of = {}
@@ -421,7 +430,7 @@ def build_model(conn):
     for c in companies.values():
         if c["referred_by"]:
             referred[c["referred_by"].strip()].append(c["name"])
-    return companies, emails, people, obs, dict(referred), orgs, schools
+    return companies, emails, people, obs, docs, dict(referred), orgs, schools
 
 
 _email_seen = set()
@@ -444,7 +453,7 @@ def wl_or_text(name, ref_names, folder="References"):
     return wl(name, folder) if name in (ref_names or ()) else (name or "")
 
 
-def render_company(c, obs, referred, ref_names=frozenset()):
+def render_company(c, obs, docs, referred, ref_names=frozenset()):
     name = c["name"]
     secs = sectors_of(c["sector"]) or sectors_of(c["sub_sector"])
     cats = [f"[[Categories/{safe_name(s)}]]" for s in secs]
@@ -598,6 +607,20 @@ def render_company(c, obs, referred, ref_names=frozenset()):
              "|--------|-------|--------|",
              f"| Asking Valuation | {cr(c['valuation']) or ''} | Call notes |",
              f"| Ask | {cr(c['ask']) or ''} | Call notes |", ""]
+    # Statutory filings (Tracxn/MCA) — material only, most-recent first
+    flist = docs.get(name.lower(), [])
+    if flist:
+        body += ["## Statutory Filings", "",
+                 f"_MCA filings via Tracxn ({len(flist)}); PDFs resolve on demand._", "",
+                 "| Date | Kind | Filing |", "|------|------|--------|"]
+        for d in flist[:25]:
+            title = d["title"] or ""
+            link = f"[{title}]({d['url']})" if d.get("url") else title
+            body.append(f"| {d['filing_date'] or ''} | {d['kind'] or ''} | {link} |")
+        if len(flist) > 25:
+            body.append(f"| | | _+{len(flist) - 25} more on Tracxn_ |")
+        body.append("")
+
     # Deal thesis / opinion / risks
     body += ["## Deal Thesis", "", (c["summary"] or "")[:400], "", "## Opinion", ""]
     for d, conf, summ in c["opinions"][-5:]:
@@ -1270,7 +1293,7 @@ def build_vault(dest, conn):
     scaffold(dest)
     write_custom_bases(dest)  # People + Companies (LinkedIn cols) + Team (interconnect)
     copy_category_mocs(dest)  # restore People/Companies/Deals + sector MOC notes
-    companies, emails, people, obs, referred, orgs, schools = build_model(conn)
+    companies, emails, people, obs, docs, referred, orgs, schools = build_model(conn)
     # normalized name → canonical note name, for routing experience/education links.
     comp_index = {_norm_co(n): n for n in companies}
     org_index = {_norm_co(n): n for n in orgs}
@@ -1290,7 +1313,7 @@ def build_vault(dest, conn):
     for c in companies.values():
         try:
             fn = safe_name(c["name"]) + ".md"
-            _write(os.path.join(dest, "References", fn), render_company(c, obs, referred, ref_names))
+            _write(os.path.join(dest, "References", fn), render_company(c, obs, docs, referred, ref_names))
             written.add(fn.lower())
         except Exception as e:
             errs += 1; print(f"[vault] skip company {c.get('name')!r}: {e!r}", flush=True)
