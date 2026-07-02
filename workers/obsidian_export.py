@@ -35,7 +35,8 @@ VAULT = sys.argv[1] if len(sys.argv) > 1 else "/opt/gbrain/vault"
 
 SCAFFOLD_DIRS = ["_templates", ".obsidian", "Schema", "scripts", "agents"]
 SCAFFOLD_FILES = ["CLAUDE.md", "AGENTS.md"]
-DATA_DIRS = ["References", "Email", "Categories", "indexes", "Organizations", "Schools"]
+DATA_DIRS = ["References", "Email", "Categories", "indexes", "Organizations", "Schools",
+             "Tracxn", "Pitchdeck", "People"]
 
 ILLEGAL = re.compile(r'[/\\:*?"<>|#\^\[\]]')
 
@@ -430,6 +431,28 @@ def build_model(conn):
     for c in companies.values():
         if c["referred_by"]:
             referred[c["referred_by"].strip()].append(c["name"])
+
+    # attach stable gb_entity UUIDs + Tracxn attrs (power unique ids + per-source notes)
+    for r in conn.execute(
+        """select canonical, id::text as id, attrs->>'tracxn_url' turl, attrs->>'hq' hq,
+                  attrs->>'employee_count' emp, attrs->>'total_funding_inr_cr' fund,
+                  keys->>'tracxn_id' tid
+             from gb_entity where type='company'""").fetchall():
+        c = companies.get(r["canonical"])
+        if c:
+            c["id"] = r["id"]
+            c["tracxn_url"] = r["turl"]
+            c["tracxn_hq"] = r["hq"]
+            c["tracxn_employees"] = r["emp"]
+            c["tracxn_funding"] = r["fund"]
+            c["has_tracxn"] = bool(r["tid"] or r["turl"]
+                                   or obs.get(r["canonical"].lower(), {}).get("verified")
+                                   or docs.get(r["canonical"].lower()))
+    for r in conn.execute("select canonical, id::text as id from gb_entity where type='person'").fetchall():
+        p = people.get(r["canonical"])
+        if p:
+            p["id"] = r["id"]
+
     return companies, emails, people, obs, docs, dict(referred), orgs, schools
 
 
@@ -465,7 +488,8 @@ def render_company(c, obs, docs, referred, ref_names=frozenset()):
     aliases = list(dict.fromkeys((c["aliases"] or []) + make_aliases(name)))
     team_all = list(c.get("contacts", {})) + c.get("team_current", []) + c.get("team_past", [])
     people_links = list(dict.fromkeys(
-        [wl(n) for n in c["founders"]] + [wl(n) for n in sorted(c["dexter"])] + [wl(n) for n in team_all]))
+        [wl(n, "People") for n in c["founders"]] + [wl(n, "People") for n in sorted(c["dexter"])]
+        + [wl(n, "People") for n in team_all]))
     email_links = [wl(e, "Email") for e in c["emails"]]
     has_deal = c["ask"] is not None or bool(c["round_type"])
 
@@ -481,7 +505,8 @@ def render_company(c, obs, docs, referred, ref_names=frozenset()):
         r = td.get(m)
         return (r["period"] or (r["as_of"].isoformat() if r.get("as_of") else None)) if r else None
 
-    fm = ["---", 'categories:', '  - "[[Companies]]"']
+    fm = ["---", 'categories:', '  - "[[Companies]]"',
+          fm_scalar("id", c.get("id")), fm_scalar("company_id", c.get("id"))]
     fm.append(fm_list("type", type_links))
     fm.append(fm_list("people", people_links))
     fm += [fm_scalar("url", c["website"]), fm_scalar("founded", c["founded"]),
@@ -542,11 +567,11 @@ def render_company(c, obs, docs, referred, ref_names=frozenset()):
     body += ["## People", "", "| Name | Role | Organization | Email | Phone |",
              "|------|------|-------------|-------|-------|"]
     for n, role in c["founders"].items():
-        body.append(f"| {wl(n)} | {role or 'Founder'} | {name} | | |")
+        body.append(f"| {wl(n, 'People')} | {role or 'Founder'} | {name} | | |")
     for n, role in contacts.items():
-        body.append(f"| {wl(n)} | {role or 'Contact'} | {name} | | |")
+        body.append(f"| {wl(n, 'People')} | {role or 'Contact'} | {name} | | |")
     for n in sorted(c["dexter"]):
-        body.append(f"| {wl(n)} | | Dexter Capital | | |")
+        body.append(f"| {wl(n, 'People')} | | Dexter Capital | | |")
     if not (c["founders"] or contacts or c["dexter"]):
         body.append("| | | | | |")
     body.append("")
@@ -607,19 +632,9 @@ def render_company(c, obs, docs, referred, ref_names=frozenset()):
              "|--------|-------|--------|",
              f"| Asking Valuation | {cr(c['valuation']) or ''} | Call notes |",
              f"| Ask | {cr(c['ask']) or ''} | Call notes |", ""]
-    # Statutory filings (Tracxn/MCA) — material only, most-recent first
-    flist = docs.get(name.lower(), [])
-    if flist:
-        body += ["## Statutory Filings", "",
-                 f"_MCA filings via Tracxn ({len(flist)}); PDFs resolve on demand._", "",
-                 "| Date | Kind | Filing |", "|------|------|--------|"]
-        for d in flist[:25]:
-            title = d["title"] or ""
-            link = f"[{title}]({d['url']})" if d.get("url") else title
-            body.append(f"| {d['filing_date'] or ''} | {d['kind'] or ''} | {link} |")
-        if len(flist) > 25:
-            body.append(f"| | | _+{len(flist) - 25} more on Tracxn_ |")
-        body.append("")
+    # (statutory filings + verified financials now live in the per-source Tracxn note,
+    #  linked from ## Sources below; the two-track Financials table above still
+    #  summarises Management vs Verified here.)
 
     # Deal thesis / opinion / risks
     body += ["## Deal Thesis", "", (c["summary"] or "")[:400], "", "## Opinion", ""]
@@ -641,10 +656,68 @@ def render_company(c, obs, docs, referred, ref_names=frozenset()):
         body += ([f"- {wl(co)}" for co in refs] + [""]) if refs else ["_None recorded._", ""]
     body += ["## Timeline", ""]
     body += [f"- [ ] {a}" for a in c["actions"]] + [""] if c["actions"] else ["- [ ] ", ""]
-    body += ["## Sources", ""]
-    body += [f"- {l}" for l in email_links] + [""]
+    body += ["## Sources", "",
+             "_Every source note for this company (Management vs Verified), by company_id:_", "",
+             "![[Company Sources.base]]", ""]
+    if c.get("has_tracxn"):
+        body += [f"→ [[Tracxn/{safe_name(name)}]] — verified financials & statutory filings"
+                 + (f" · [Tracxn ↗]({c['tracxn_url']})" if c.get("tracxn_url") else ""), ""]
     body += ["## Notes", ""]
     return "\n".join(fm) + "\n" + "\n".join(body)
+
+
+def render_tracxn(c, obs, docs):
+    """Per-source note: Tracxn/MCA verified financials + statutory filings for one
+    company. Content lives here (per-source); the References/ note is the anchor."""
+    name = c["name"]
+    ver = (obs.get(name.lower()) or {}).get("verified", {})
+    flist = docs.get(name.lower(), [])
+
+    def fv(m):
+        r = ver.get(m)
+        return r["value_num"] if r else None
+
+    fm = ["---", 'categories:', '  - "[[Companies (Tracxn)]]"',
+          fm_scalar("id", c.get("id")),
+          fm_scalar("company_id", c.get("id")),
+          fm_scalar("company", name),
+          fm_list("of_company", [wl(name)]),
+          fm_scalar("source", "Tracxn"),
+          fm_scalar("hq", c.get("tracxn_hq") or c.get("hq")),
+          fm_scalar("employee_count", c.get("tracxn_employees")),
+          fm_scalar("revenue_inr_cr", fv("revenue")),
+          fm_scalar("valuation_inr_cr", fv("valuation")),
+          fm_scalar("ebitda_inr_cr", fv("ebitda")),
+          fm_scalar("net_profit_inr_cr", fv("net_profit")),
+          fm_scalar("total_funding_inr_cr", c.get("tracxn_funding")),
+          fm_scalar("tracxn_url", c.get("tracxn_url")),
+          "---", ""]
+    body = [f"Verified financials & statutory filings for [[References/{safe_name(name)}]]"
+            + (f" · [Tracxn ↗]({c['tracxn_url']})" if c.get("tracxn_url") else ""), "",
+            "## Financials (Verified — Tracxn/MCA)", "",
+            "| Metric | Value (₹ Cr) | Period | As of | Source |",
+            "|--------|--------------|--------|-------|--------|"]
+    rows = []
+    for mkey, label in (("revenue", "Revenue"), ("ebitda", "EBITDA"), ("net_profit", "Net Profit"),
+                        ("valuation", "Valuation"), ("funding", "Total Funding")):
+        r = ver.get(mkey)
+        if r and r.get("value_num") is not None:
+            rows.append(f"| {label} | {cr(r['value_num']) or r['value_num']} | {r.get('period') or ''} "
+                        f"| {r.get('as_of') or ''} | {r.get('source')} |")
+    body += rows or ["| — | | | | |"]
+    body.append("")
+    if flist:
+        body += ["## Statutory Filings", "",
+                 f"_MCA filings via Tracxn ({len(flist)}); PDFs resolve on demand._", "",
+                 "| Date | Kind | Filing |", "|------|------|--------|"]
+        for d in flist[:40]:
+            title = d["title"] or ""
+            link = f"[{title}]({d['url']})" if d.get("url") else title
+            body.append(f"| {d['filing_date'] or ''} | {d['kind'] or ''} | {link} |")
+        if len(flist) > 40:
+            body.append(f"| | | _+{len(flist) - 40} more_ |")
+        body.append("")
+    return "\n".join(fm) + "\n" + "\n".join(body) + "\n"
 
 
 def _exp_line(e, comp_index=None, org_index=None):
@@ -705,12 +778,18 @@ def _honor_line(h):
 
 def render_person(name, p, comp_index=None, org_index=None, school_index=None):
     prof = p.get("profile") or {}
+    # tenure at the current role (LinkedIn experience whose end is Present/blank)
+    _cur_exp = next((e for e in (prof.get("experience") or [])
+                     if str((e or {}).get("end", "")).strip().lower() in ("present", "")), None)
+    cur_tenure = (_cur_exp or {}).get("duration")
     # current employers (route org vs company); fall back to extraction company
     cur = [aff_wl(n, k) for n, k in p.get("cur_aff", [])] or \
           ([wl(p["company"])] if p.get("company") else [])
     past = [aff_wl(n, k) for n, k in p.get("past_aff", [])]
     schools = [wl(s, "Schools") for s in p.get("schools", [])]
     fm = ["---", 'categories:', '  - "[[People]]"',
+          fm_scalar("id", p.get("id")),
+          fm_scalar("person_id", p.get("id")),
           fm_scalar("profession", p.get("role")),
           fm_list("org", cur),
           fm_list("past_companies", past),
@@ -723,6 +802,7 @@ def render_person(name, p, comp_index=None, org_index=None, school_index=None):
             fm_scalar("linkedin_id", prof.get("public_id")),
             fm_scalar("location", prof.get("location")),
             fm_scalar("current_title", prof.get("current_title")),
+            fm_scalar("current_tenure", cur_tenure),
             fm_scalar("current_company", prof.get("current_company")),
             fm_scalar("followers", prof.get("followers")),
             fm_scalar("connections", prof.get("connections")),
@@ -837,10 +917,14 @@ def render_email(e, companies):
           fm_list("participants", participants),
           fm_scalar("Processed", True),
           fm_list("company", [wl(comp)]),
-          fm_list("people", [wl(n) for n in founders]),
+          fm_list("people", [wl(n, "People") for n in founders]),
           fm_scalar("context", (ex.get("summary") or "")[:160]),
           fm_scalar("summary", (ex.get("summary") or "")[:300]),
           fm_scalar("meeting_type", mtype),
+          fm_scalar("company_id", (companies.get(comp) or {}).get("id")),
+          fm_scalar("revenue_inr_cr", ex.get("revenue_inr_cr")),
+          fm_scalar("valuation_inr_cr", ex.get("valuation_inr_cr")),
+          fm_scalar("ebitda_inr_cr", ex.get("ebitda_inr_cr")),
           "tags:", "  - email", "---", ""]
     head = [f"**Source:** {origin}"
             + (f" · [open deck]({e['source_url']})" if e.get("source_url") else ""), ""]
@@ -1052,6 +1136,8 @@ properties:
     displayName: Headline
   note.current_title:
     displayName: Role
+  note.current_tenure:
+    displayName: Tenure
   note.location:
     displayName: Location
   note.followers:
@@ -1067,6 +1153,7 @@ views:
       - file.name
       - headline
       - current_title
+      - current_tenure
       - location
       - followers
       - linkedin
@@ -1215,6 +1302,57 @@ views:
 """
 
 
+# Company Sources: every per-source note (Tracxn / Pitchdeck / Email) reassembled
+# by company_id. Embedded in the References/ anchor (the "This company" view uses
+# this.company_id); also opens standalone grouped by company. The two financial
+# tracks appear as separate rows (Tracxn = Verified, Pitchdeck/Email = Management).
+COMPANY_SOURCES_BASE = """filters:
+  and:
+    - note.source
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Note
+  note.source:
+    displayName: Source
+  note.company:
+    displayName: Company
+  note.revenue_inr_cr:
+    displayName: Revenue (Cr)
+  note.valuation_inr_cr:
+    displayName: Valuation (Cr)
+  note.ebitda_inr_cr:
+    displayName: EBITDA (Cr)
+  note.date_iso:
+    displayName: Date
+views:
+  - type: table
+    name: This company
+    filters:
+      and:
+        - note.company_id == this.company_id
+    order:
+      - source
+      - revenue_inr_cr
+      - valuation_inr_cr
+      - ebitda_inr_cr
+      - date_iso
+      - file.name
+  - type: table
+    name: All sources
+    order:
+      - company
+      - source
+      - revenue_inr_cr
+      - valuation_inr_cr
+      - date_iso
+      - file.name
+    sort:
+      - property: company
+        direction: ASC
+"""
+
+
 def write_custom_bases(dest):
     """Write our enhanced/relationship bases over the scaffolded copies so the
     source template vault stays pristine. People + Companies surface full LinkedIn
@@ -1229,6 +1367,7 @@ def write_custom_bases(dest):
     _write(os.path.join(bd, "Grads.base"), GRADS_BASE)
     _write(os.path.join(bd, "Organizations.base"), ORGANIZATIONS_BASE)
     _write(os.path.join(bd, "Schools.base"), SCHOOLS_BASE)
+    _write(os.path.join(bd, "Company Sources.base"), COMPANY_SOURCES_BASE)
 
 
 # non-sector MOC notes our notes link to but the exporter doesn't generate.
@@ -1315,15 +1454,18 @@ def build_vault(dest, conn):
             fn = safe_name(c["name"]) + ".md"
             _write(os.path.join(dest, "References", fn), render_company(c, obs, docs, referred, ref_names))
             written.add(fn.lower())
+            if c.get("has_tracxn"):     # per-source: verified financials + filings note
+                _write(os.path.join(dest, "Tracxn", fn), render_tracxn(c, obs, docs))
         except Exception as e:
             errs += 1; print(f"[vault] skip company {c.get('name')!r}: {e!r}", flush=True)
+    people_seen = set()                 # people live in People/ now (own namespace)
     for n, p in people.items():
         try:
             fn = safe_name(n) + ".md"
-            if fn.lower() in written:    # name clashes with a company / another person
+            if fn.lower() in people_seen:
                 continue
-            _write(os.path.join(dest, "References", fn), render_person(n, p, comp_index, org_index, school_index))
-            written.add(fn.lower())
+            _write(os.path.join(dest, "People", fn), render_person(n, p, comp_index, org_index, school_index))
+            people_seen.add(fn.lower())
         except Exception as e:
             errs += 1; print(f"[vault] skip person {n!r}: {e!r}", flush=True)
     # Organizations (past/other employers) + Schools — separate folders, so they
@@ -1345,7 +1487,8 @@ def build_vault(dest, conn):
                f"---\ntags:\n  - categories\n---\n\n![[{base}.base]]\n")
     for e in emails:
         try:
-            _write(os.path.join(dest, "Email", e["file"] + ".md"), render_email(e, companies))
+            folder = "Pitchdeck" if e["source"] == "pdf" else "Email"   # per-source split
+            _write(os.path.join(dest, folder, e["file"] + ".md"), render_email(e, companies))
         except Exception as ex:
             errs += 1; print(f"[vault] skip email {e.get('file')!r}: {ex!r}", flush=True)
     for s in sorted(sectors):
