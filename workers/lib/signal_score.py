@@ -57,6 +57,11 @@ def has_deal_terms(*texts: str | None) -> bool:
 def signal_score(env: ScoreInput) -> float:
     s = SOURCE_PRIORS.get(env.source, 0.3)
 
+    # calendar: internal-only events (standups, reminders — no non-Dexter
+    # attendee) are noise unless they carry explicit deal language below.
+    if env.source == "calendar" and "external-meeting" not in env.labels:
+        s -= 0.40
+
     if env.sender_is_known:
         s += 0.20
     if has_deal_terms(env.title, env.body_clean):

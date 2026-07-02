@@ -102,7 +102,8 @@ def is_investor(etype: str) -> bool:
 
 
 # ── Dexter Capital team ──────────────────────────────────────
-DEXTER_DOMAINS = ("dextercapital.in", "dexter.ventures", "discoverventures.in")
+DEXTER_DOMAINS = ("dextercapital.in", "dexter.ventures", "discoverventures.in",
+                  "deltainvest.in", "dexterangels.com")   # sister entities (seen on calendar)
 DEXTER_TEAM = {
     "Devendra Agrawal", "Rohit Singh", "Divyanshu Tambe", "Gaurav Goyal",
     "Ashish Mathur", "Abhijeet Dhar", "Bindu Reddy", "Vishal Maniar",

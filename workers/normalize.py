@@ -172,20 +172,33 @@ def map_gmail(p: dict) -> Envelope:
 
 
 def map_calendar(p: dict) -> Envelope:
-    """Google Calendar Events resource. Structured — no LLM needed."""
+    """Google Calendar Events resource. Structured — no LLM needed.
+
+    Labels 'external-meeting' when any attendee is outside the Dexter domains —
+    the signal gate indexes only external meetings (founder/investor calls) or
+    events with explicit deal language; internal standups/reminders never reach
+    the LLM (the first 30-day sync flooded extract: 959/1015 passed the gate)."""
+    from workers.lib.taxonomy import DEXTER_DOMAINS
     start = (p.get("start") or {}).get("dateTime") or (p.get("start") or {}).get("date")
     attendees = p.get("attendees", []) or []
+    emails = [a.get("email") for a in attendees if a.get("email")]
+    labels = ["calendar"]
+    internal_suffixes = tuple("@" + d for d in DEXTER_DOMAINS) + ("@resource.calendar.google.com",)
+    if any(not e.lower().endswith(internal_suffixes) for e in emails):
+        labels.append("external-meeting")
+    # strip Google Meet boilerplate blocks so they can't masquerade as content
+    desc = re.sub(r"-::~[\s\S]*?~::-", "", p.get("description", "") or "").strip()
     return Envelope(
         kind="event",
         thread_id=p.get("recurringEventId") or p.get("id"),
         occurred_at=ts(start),
         actors={
             "organizer": (p.get("organizer") or {}).get("email"),
-            "participants": [a.get("email") for a in attendees if a.get("email")],
+            "participants": emails,
         },
         title=p.get("summary"),
-        body_raw=p.get("description", "") or "",
-        labels=["calendar"],
+        body_raw=desc,
+        labels=labels,
         has_doc_attachment=bool(p.get("attachments")),
         content_hash=sha256((p.get("id", "")) + (p.get("updated", "") or start or "")),
     )
