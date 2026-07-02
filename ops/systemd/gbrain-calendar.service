@@ -1,0 +1,20 @@
+# gbrain · Google Calendar connector (oneshot, driven by gbrain-calendar.timer)
+# Polls each connected account's primary calendar once and lands gb_raw rows.
+# Stays dumb; the 005 trigger enqueues normalize (map_calendar → meetings).
+# Install: copy gbrain-calendar.{service,timer} to /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now gbrain-calendar.timer
+# Logs:   journalctl -u gbrain-calendar -f
+[Unit]
+Description=gbrain Google Calendar connector (poll + land)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gbrain
+WorkingDirectory=/opt/gbrain
+EnvironmentFile=/opt/gbrain/.env
+ExecStart=/opt/gbrain/.venv/bin/python -m workers.connectors.gcal --once
+StandardOutput=journal
+StandardError=journal

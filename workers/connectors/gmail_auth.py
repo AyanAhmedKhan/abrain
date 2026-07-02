@@ -28,7 +28,8 @@ import os
 import sys
 from urllib.parse import urlparse, parse_qs
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/calendar.readonly"]  # M3: one consent covers both
 CLIENT = os.environ.get("GMAIL_CLIENT_SECRET", "/opt/gbrain/client_secret.json")
 TOKEN_DIR = os.environ.get("GMAIL_TOKEN_DIR", "/opt/gbrain/tokens")
 REDIRECT = "http://localhost"
