@@ -52,6 +52,13 @@ def safe_name(name: str) -> str:
     return n or "Untitled"
 
 
+def slug_id(name: str) -> str:
+    """Human-memorable stable id: the safe filename, lowercased + hyphenated
+    (e.g. 'The Little Farm Co.' → 'the-little-farm-co'). Source notes suffix it
+    ('-trxcn', '-pitch-<date>') so every note's id is unique but recognisable."""
+    return re.sub(r"-{2,}", "-", re.sub(r"[\s_.]+", "-", safe_name(name).lower())).strip("-")
+
+
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
@@ -506,7 +513,9 @@ def render_company(c, obs, docs, referred, ref_names=frozenset()):
         return (r["period"] or (r["as_of"].isoformat() if r.get("as_of") else None)) if r else None
 
     fm = ["---", 'categories:', '  - "[[Companies]]"',
-          fm_scalar("id", c.get("id")), fm_scalar("company_id", c.get("id"))]
+          fm_scalar("id", slug_id(name)),
+          fm_scalar("company_id", slug_id(name)),
+          fm_scalar("uuid", c.get("id"))]
     fm.append(fm_list("type", type_links))
     fm.append(fm_list("people", people_links))
     fm += [fm_scalar("url", c["website"]), fm_scalar("founded", c["founded"]),
@@ -678,10 +687,11 @@ def render_tracxn(c, obs, docs):
         return r["value_num"] if r else None
 
     fm = ["---", 'categories:', '  - "[[Companies (Tracxn)]]"',
-          fm_scalar("id", c.get("id")),
-          fm_scalar("company_id", c.get("id")),
-          fm_scalar("company", name),
-          fm_list("of_company", [wl(name)]),
+          fm_scalar("id", slug_id(name) + "-trxcn"),
+          fm_scalar("company_id", slug_id(name)),
+          fm_scalar("uuid", c.get("id")),
+          fm_list("company", [wl(name)]),          # clickable → the References/ anchor
+          fm_scalar("company_name", name),
           fm_scalar("source", "Tracxn"),
           fm_scalar("hq", c.get("tracxn_hq") or c.get("hq")),
           fm_scalar("employee_count", c.get("tracxn_employees")),
@@ -788,8 +798,9 @@ def render_person(name, p, comp_index=None, org_index=None, school_index=None):
     past = [aff_wl(n, k) for n, k in p.get("past_aff", [])]
     schools = [wl(s, "Schools") for s in p.get("schools", [])]
     fm = ["---", 'categories:', '  - "[[People]]"',
-          fm_scalar("id", p.get("id")),
-          fm_scalar("person_id", p.get("id")),
+          fm_scalar("id", slug_id(name)),
+          fm_scalar("person_id", slug_id(name)),
+          fm_scalar("uuid", p.get("id")),
           fm_scalar("profession", p.get("role")),
           fm_list("org", cur),
           fm_list("past_companies", past),
@@ -855,7 +866,10 @@ def render_person(name, p, comp_index=None, org_index=None, school_index=None):
             d = f" — {pr['description']}" if pr.get("description") else ""
             body.append(f"- **{t}**{d}")
         body.append("")
-    body += ["## Articles", "", "![[Articles by Person.base]]", "",
+    body += ["## Appearances", "",
+             "_Every source note (calls, decks) naming this person:_", "",
+             "![[Person Sources.base]]", "",
+             "## Articles", "", "![[Articles by Person.base]]", "",
              "## Meetings", "", "![[Meetings.base]]", "", "## Deals", "", "![[Deal Metrics.base]]", "",
              "## Mentions", "", "![[Mentions.base]]", "", "## Notes", ""]
     return "\n".join(fm) + "\n" + "\n".join(body)
@@ -921,7 +935,9 @@ def render_email(e, companies):
           fm_scalar("context", (ex.get("summary") or "")[:160]),
           fm_scalar("summary", (ex.get("summary") or "")[:300]),
           fm_scalar("meeting_type", mtype),
-          fm_scalar("company_id", (companies.get(comp) or {}).get("id")),
+          fm_scalar("id", f"{slug_id(comp)}-{'pitch' if e['source'] == 'pdf' else 'email'}-{e['date'] or 'undated'}"),
+          fm_scalar("company_id", slug_id(comp)),
+          fm_scalar("uuid", (companies.get(comp) or {}).get("id")),
           fm_scalar("revenue_inr_cr", ex.get("revenue_inr_cr")),
           fm_scalar("valuation_inr_cr", ex.get("valuation_inr_cr")),
           fm_scalar("ebitda_inr_cr", ex.get("ebitda_inr_cr")),
@@ -1309,10 +1325,13 @@ views:
 COMPANY_SOURCES_BASE = """filters:
   and:
     - note.source
+    - note.company
     - '!file.name.contains("Template")'
 properties:
   file.name:
     displayName: Note
+  note.id:
+    displayName: ID
   note.source:
     displayName: Source
   note.company:
@@ -1330,9 +1349,10 @@ views:
     name: This company
     filters:
       and:
-        - note.company_id == this.company_id
+        - list(company).contains(this)
     order:
       - source
+      - id
       - revenue_inr_cr
       - valuation_inr_cr
       - ebitda_inr_cr
@@ -1343,6 +1363,7 @@ views:
     order:
       - company
       - source
+      - id
       - revenue_inr_cr
       - valuation_inr_cr
       - date_iso
@@ -1350,6 +1371,42 @@ views:
     sort:
       - property: company
         direction: ASC
+"""
+
+
+# Person Sources: every source note (call notes, decks) whose `people` list links
+# to the embedding person — the person-side mirror of Company Sources.
+PERSON_SOURCES_BASE = """filters:
+  and:
+    - note.source
+    - note.people
+    - '!file.name.contains("Template")'
+properties:
+  file.name:
+    displayName: Note
+  note.source:
+    displayName: Source
+  note.company:
+    displayName: Company
+  note.meeting_type:
+    displayName: Type
+  note.date_iso:
+    displayName: Date
+views:
+  - type: table
+    name: This person
+    filters:
+      and:
+        - list(people).contains(this)
+    order:
+      - date_iso
+      - source
+      - meeting_type
+      - company
+      - file.name
+    sort:
+      - property: date_iso
+        direction: DESC
 """
 
 
@@ -1368,6 +1425,7 @@ def write_custom_bases(dest):
     _write(os.path.join(bd, "Organizations.base"), ORGANIZATIONS_BASE)
     _write(os.path.join(bd, "Schools.base"), SCHOOLS_BASE)
     _write(os.path.join(bd, "Company Sources.base"), COMPANY_SOURCES_BASE)
+    _write(os.path.join(bd, "Person Sources.base"), PERSON_SOURCES_BASE)
 
 
 # non-sector MOC notes our notes link to but the exporter doesn't generate.
@@ -1481,8 +1539,9 @@ def build_vault(dest, conn):
                 seen_fn.add(fn.lower())
             except Exception as e:
                 errs += 1; print(f"[vault] skip {folder} {nm!r}: {e!r}", flush=True)
-    # MOC notes so [[Organizations]] / [[Schools]] category links resolve
-    for moc, base in (("Organizations", "Organizations"), ("Schools", "Schools")):
+    # MOC notes so [[Organizations]] / [[Schools]] / [[Companies (Tracxn)]] resolve
+    for moc, base in (("Organizations", "Organizations"), ("Schools", "Schools"),
+                      ("Companies (Tracxn)", "Company Sources")):
         _write(os.path.join(dest, "Categories", moc + ".md"),
                f"---\ntags:\n  - categories\n---\n\n![[{base}.base]]\n")
     for e in emails:
